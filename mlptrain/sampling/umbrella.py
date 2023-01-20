@@ -10,7 +10,8 @@ from mlptrain.log import logger
 from typing import Optional, List, Callable, Tuple
 from scipy.optimize import curve_fit
 
-
+# TODO: should try to understand the purpose of this function
+#  (I guess just a redefinition to explicitly say that it does that)
 def _run_individual_window(frame, mlp, temp, interval, dt, bias, **kwargs):
     """Runs an individual umbrella sampling window. Adaptive sampling to
     be implemented"""
@@ -92,6 +93,7 @@ class _Window:
         """
         return self._bias.ref
 
+    # TODO: File not closed
     @classmethod
     def from_file(cls, filename: str) -> '_Window':
         """
@@ -310,7 +312,7 @@ class UmbrellaSampling:
                        first window
             
             final_ref: (float | None) Value of reaction coordinate in Å for
-                       first window
+                       last window
             
             n_windows: (int) Number of windows to run in the umbrella sampling
 
@@ -333,8 +335,12 @@ class UmbrellaSampling:
                         f'κ = {self.kappa:.3f} eV / Å^2')
 
             bias = Bias(self.zeta_func, kappa=self.kappa, reference=ref)
+            # TODO: why does this assume combined_traj will contain a frame
+            #  which is closer to the reference zeta value?
             _traj = combined_traj if self._no_ok_frame_in(traj, ref) else traj
 
+            # TODO: the starting frame might be None if _traj becomes ConfigurationSet()
+            #  in the first window
             win_traj = _run_individual_window(self._best_init_frame(bias, _traj),
                                               mlp,
                                               temp,

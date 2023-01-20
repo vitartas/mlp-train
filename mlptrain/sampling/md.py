@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import autode as ade
+import time
 from typing import Optional
 from mlptrain.configurations import Configuration, Trajectory
 from mlptrain.config import Config
@@ -14,7 +15,7 @@ from ase.md.verlet import VelocityVerlet
 from ase import units as ase_units
 from numpy.random import RandomState
 
-
+# TODO: Included a log message for testing time
 @work_in_tmp_dir(copied_exts=['.xml', '.json', '.pth'])
 def run_mlp_md(configuration: 'mlptrain.Configuration',
                mlp:           'mlptrain.potentials._base.MLPotential',
@@ -72,6 +73,8 @@ def run_mlp_md(configuration: 'mlptrain.Configuration',
     n_cores = kwargs['n_cores'] if 'n_cores' in kwargs else min(Config.n_cores, 8)
     n_steps = _n_simulation_steps(dt, kwargs)
 
+    # TODO: Probably overwrites the value used in the submission script
+    #  (at runtime)
     os.environ['OMP_NUM_THREADS'] = str(n_cores)
     logger.info(f'Using {n_cores} cores for MLP MD')
 
@@ -105,7 +108,10 @@ def run_mlp_md(configuration: 'mlptrain.Configuration',
     dyn.attach(traj.write, interval=interval)
 
     logger.info(f'Running {n_steps:.0f} steps with a timestep of {dt} fs')
+    start = time.perf_counter()
     dyn.run(steps=n_steps)
+    finish = time.perf_counter()
+    logger.info(f'Time taken to run molecular dynamics: {(finish - start):.1f} s')
 
     traj = _convert_ase_traj('tmp.traj')
 
@@ -116,7 +122,7 @@ def run_mlp_md(configuration: 'mlptrain.Configuration',
 
     return traj
 
-
+# TODO: Into an mlptrain Trajectory
 def _convert_ase_traj(filename: str) -> 'mlptrain.Trajectory':
     """Convert an ASE trajectory into a mlptrain ConfigurationSet"""
 

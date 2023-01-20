@@ -471,6 +471,8 @@ class ConfigurationSet(list):
         logger.info(f'Current number of configurations is {len(self)}')
         return self
 
+    # TODO: No point to specify n_cores here
+    #  as it's going to be overwritten
     def _run_parallel_method(self, function, **kwargs):
         """Run a set of electronic structure calculations on this set
         in parallel
@@ -481,6 +483,8 @@ class ConfigurationSet(list):
         """
         logger.info(f'Running calculations over {len(self)} configurations')
 
+        # TODO: Why is this set to one?
+        #  can test if the speed changes by changing this
         os.environ['OMP_NUM_THREADS'] = '1'
         os.environ['MLK_NUM_THREADS'] = '1'
 
@@ -503,7 +507,7 @@ class ConfigurationSet(list):
             for i, result in enumerate(results):
                 self[i] = result.get(timeout=None)
 
-        logger.info(f'Calculations done in {(time() - start_time) / 60:.1f} m')
+        logger.info(f'Calculations done in {(time() - start_time):.1f} s')
         return None
 
     @staticmethod
