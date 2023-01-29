@@ -289,6 +289,7 @@ class UmbrellaSampling:
                               init_ref:  Optional[float] = None,
                               final_ref: Optional[float] = None,
                               n_windows: int = 10,
+                              save_sep:  Optional[bool] = False,
                               **kwargs
                               ) -> None:
         """
@@ -320,6 +321,8 @@ class UmbrellaSampling:
             
             n_windows: (int) Number of windows to run in the umbrella sampling
 
+            save_sep: (bool) If True saves trajectories of each window separately
+
         -------------------
         Keyword Arguments:
 
@@ -334,8 +337,9 @@ class UmbrellaSampling:
         self.temp = temp
         zeta_refs = self._reference_values(traj, n_windows, init_ref, final_ref)
 
-        combined_traj = ConfigurationSet()
-        win_trajs = []
+        # window_process.get() --> window_traj
+        window_trajs = []
+        window_processes = []
         biases = []
 
         n_processes = min(n_windows, Config.n_cores)
@@ -346,42 +350,54 @@ class UmbrellaSampling:
 
             for idx, ref in enumerate(zeta_refs):
 
-                logger.info(f'Running US window {idx+1} with ζ_ref={ref:.2f} Å and '
-                            f'κ = {self.kappa:.3f} eV / Å^2')
+                logger.info(f'Running US window {idx} with ζ_ref={ref:.2f} Å '
+                            f'and κ = {self.kappa:.3f} eV / Å^2')
 
                 bias = Bias(self.zeta_func, kappa=self.kappa, reference=ref)
 
                 if self._no_ok_frame_in(traj, ref):
-                    # If no ok frame takes the trajectory of the previous window,
-                    # .get() blocks the process until the previous window finishes
-                    _traj = win_trajs[idx-1].get()
+                    # Takes the trajectory of the previous window, .get() blocks
+                    # the main process until the previous window finishes
+                    _traj = window_processes[idx-1].get()
                 else:
                     _traj = traj
 
                 init_frame = self._best_init_frame(bias, _traj)
 
-                win_traj = pool.apply_async(func=_run_individual_window,
-                                            args=(init_frame,
-                                                  mlp,
-                                                  temp,
-                                                  interval,
-                                                  dt,
-                                                  bias),
-                                            kwds=kwargs)
-                win_trajs.append(win_traj)
-                biases.append(biases)
+                window_process = pool.apply_async(func=_run_individual_window,
+                                                args=(init_frame,
+                                                      mlp,
+                                                      temp,
+                                                      interval,
+                                                      dt,
+                                                      bias),
+                                                kwds=kwargs)
+                window_processes.append(window_process)
+                biases.append(bias)
 
-            for win_traj, bias in zip(win_trajs, biases):
+            for window_process, bias in zip(window_processes, biases):
 
-                window = _Window(obs_zetas=self.zeta_func(win_traj.get()), bias=bias)
+                window_traj = window_process.get()
+                window = _Window(obs_zetas=self.zeta_func(window_traj),
+                                 bias=bias)
                 window.plot(min_zeta=min(zeta_refs),
                             max_zeta=max(zeta_refs),
                             fit_gaussian=True)
 
                 self.windows.append(window)
-                combined_traj = combined_traj + win_traj.get()
+                window_trajs.append(window_traj)
 
-        combined_traj.save(filename='combined_windows.xyz')
+        if save_sep:
+            os.mkdir('trajectories')
+            for idx, window_traj in enumerate(window_trajs):
+                window_traj.save(filename=f'trajectories/window_{idx}.xyz')
+
+        else:
+            combined_traj = ConfigurationSet()
+            for window_traj in window_trajs:
+                combined_traj += window_traj
+
+            combined_traj.save(filename='combined_windows.xyz')
 
         finish_umbrella = time.perf_counter()
         logger.info('Umbrella sampling done in '
