@@ -95,6 +95,8 @@ def train(mlp:               'mlptrain.potentials._base.MLPotential',
               under-explored regions in the dynamics
     """
     if init_configs is None:
+        # TODO: Should give a NotImplementedError if more than one molecule
+        #  is present in the system
         init_config = mlp.system.configuration
         _gen_and_set_init_training_configs(mlp,
                                            method_name=method_name,
@@ -109,6 +111,7 @@ def train(mlp:               'mlptrain.potentials._base.MLPotential',
 
     mlp.train()
 
+    # TODO: Not necessarily GAP
     # Run the active learning loop, running iterative GAP-MD
     for iteration in range(max_active_iters):
 
@@ -141,6 +144,9 @@ def train(mlp:               'mlptrain.potentials._base.MLPotential',
         if mlp.training_data.has_a_none_energy:
             mlp.training_data.remove_none_energy()
 
+        # TODO: Possible that no new configurations were added to the training
+        #  set, but if iteration < min_active_iters the mlp is still retrained
+        #  with the same data (not ideal)
         mlp.train()
 
     return None
@@ -156,6 +162,7 @@ def _add_active_configs(mlp,
     Add a number (n_configs) of configurations to the current training data
     based on active learning selection of MLP-MD generated configurations
     """
+    # TODO: I wonder if not using a multiple number causes any problems
     if Config.n_cores > n_configs and Config.n_cores % n_configs != 0:
         raise NotImplementedError('Active learning is only implemented using '
                                   'an multiple of the number n_configs_iter. '
@@ -285,6 +292,7 @@ def _gen_active_config(config:      'mlptrain.Configuration',
                 return frame
 
         logger.error('Failed to backtrack to a suitable configuration')
+        # TODO: What frame is this?
         return frame
 
     if curr_time + md_time > max_time:
@@ -330,6 +338,7 @@ def _gen_and_set_init_training_configs(mlp, method_name, num) -> None:
 
     # Initial configurations are not defined, so make some - will use random
     # with the largest maximum distance between molecules possible
+    # TODO: What's the motivation for subtracting 0.5?
     max_vdw = max(atom.vdw_radius for atom in mlp.system.atoms)
     ideal_dist = 2 * max_vdw - 0.5  # Desired minimum distance in Å
 
@@ -337,6 +346,8 @@ def _gen_and_set_init_training_configs(mlp, method_name, num) -> None:
     # random configuration can be generated with that distance threshold
     p_acc, dist = 0, ideal_dist + 0.2
 
+    # TODO: in this implementation a single generated configuration is enough
+    #  to break from this loop
     while p_acc < 0.1:
         n_generated_configs = 0
         dist -= 0.2                # Reduce the minimum distance requirement
