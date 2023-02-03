@@ -16,6 +16,7 @@ from ase import units as ase_units
 from numpy.random import RandomState
 
 # TODO: Included a log message for testing time
+# TODO: Could change from ASE time units to fs immediately
 @work_in_tmp_dir(copied_exts=['.xml', '.json', '.pth'])
 def run_mlp_md(configuration: 'mlptrain.Configuration',
                mlp:           'mlptrain.potentials._base.MLPotential',

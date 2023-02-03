@@ -520,6 +520,7 @@ class UmbrellaSampling:
 
         return None
 
+    # TODO: Kinda deprecated function
     def load(self, folder_name: str) -> None:
         """Load data from a set of saved windows"""
 
