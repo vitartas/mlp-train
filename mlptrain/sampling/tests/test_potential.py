@@ -33,6 +33,39 @@ class HarmonicPotential(Calculator):
         return force
 
 
+class DoubleWellPotential(Calculator):
+
+    __test__ = False
+
+    def get_potential_energy(self, atoms):
+
+        r = atoms.get_distance(0, 1)
+
+        return (r - 1)**2 * (r - 4)**2
+
+    def get_forces(self, atoms):
+
+        derivative = np.zeros((len(atoms), 3))
+
+        r = atoms.get_distance(0, 1)
+        if r < 10**(-7):
+            r = 10**(-7)
+
+        a = 0.1
+
+        x_dist, y_dist, z_dist = [atoms[0].position[j] - atoms[1].position[j]
+                                  for j in range(3)]
+
+        x_i, y_i, z_i = (x_dist / r), (y_dist / r), (z_dist / r)
+
+        derivative[0] = [x_i, y_i, z_i]
+        derivative[1] = [-x_i, -y_i, -z_i]
+
+        force = -2 * a * derivative * (r - 1) * (r - 4) * (2*r - 5)
+
+        return force
+
+
 class TestPotential(MLPotential):
 
     __test__ = False
@@ -50,6 +83,9 @@ class TestPotential(MLPotential):
 
         if self.calculator == 'harmonic':
             return HarmonicPotential()
+
+        if self.calculator == 'doublewell':
+            return DoubleWellPotential()
 
         if self.calculator == 'lj':
             return LennardJones(rc=2.5, r0=3.0)

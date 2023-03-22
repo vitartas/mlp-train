@@ -157,7 +157,10 @@ class Metadynamics:
         finish = time.perf_counter()
         logger.info(f'Width estimation done in {(finish - start) / 60:.1f} m')
 
-        return list(np.min(all_widths, axis=0))
+        widths = list(np.min(all_widths, axis=0))
+        logger.info(f'Estimated widths: {widths}')
+
+        return widths
 
     def _get_width_for_single(self, configuration, mlp, temp, dt, interval,
                               bias, plot, **kwargs) -> List:
