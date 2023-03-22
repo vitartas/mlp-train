@@ -907,7 +907,9 @@ class Metadynamics:
         self._generate_fes_files_for_block_analysis(blocksize, temp,
                                                     min_max_params, n_bins)
 
-        cv_grids, fes_grids = self._fes_files_to_grids(energy_units, n_bins)
+        # TODO: Modified to relative=False
+        cv_grids, fes_grids = self._fes_files_to_grids(energy_units, n_bins,
+                                                       relative=False)
 
         fes_grids[fes_grids == np.inf] = np.nan
         n_blocks = len(fes_grids)
@@ -938,6 +940,7 @@ class Metadynamics:
         bandwidth_seq = ','.join('0.05' for _ in range(self.n_cvs))
         bin_param_seq = ','.join(str(n_bins-1) for _ in range(self.n_cvs))
 
+        # TODO: Modified normalisation (now std errors shouldn't be used)
         reweight_setup = ['as: REWEIGHT_BIAS '
                           f'TEMP={temp} '
                           'ARG=metad.bias',
@@ -949,6 +952,7 @@ class Metadynamics:
                           f'GRID_MAX={max_param_seq} '
                           f'GRID_BIN={bin_param_seq} '
                           f'BANDWIDTH={bandwidth_seq} '
+                          'NORMALIZATION=true '
                           'LOGWEIGHTS=as',
                           'fes: CONVERT_TO_FES '
                           f'TEMP={temp} '
@@ -982,6 +986,17 @@ class Metadynamics:
                     max_idx = idx
 
         os.rename('fes.dat', f'fes_{max_idx+1}.dat')
+
+        # TODO: Printing normalisation as a test
+        # norms = []
+        # for filename in os.listdir():
+        #     if filename.startswith('fes_'):
+        #         with open(filename, 'r') as f:
+        #             for line in f:
+        #                 if line.startswith('#! SET normalisation'):
+        #                     norm = line.split()[3]
+        #                     norms.append(norm)
+        # logger.info(norms)
 
         return None
 

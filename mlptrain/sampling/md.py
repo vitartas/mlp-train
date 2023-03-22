@@ -14,6 +14,7 @@ from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.io.trajectory import Trajectory as ASETrajectory
 from ase.md.langevin import Langevin
 from ase.md.verlet import VelocityVerlet
+from ase.constraints import FixedLine, FixCom
 from ase.io import read
 from ase import units as ase_units
 
@@ -221,6 +222,12 @@ def _run_mlp_md(configuration:  'mlptrain.Configuration',
 
     ase_atoms = configuration.ase_atoms
     traj_name = _get_traj_name(restart_files, **kwargs)
+
+    # TODO: Constraining the system to a line and fixing the centre of mass
+    fixed_line = FixedLine(indices=[atom.index for atom in ase_atoms],
+                           direction=[0, 0, 1])
+    fixed_com = FixCom()
+    ase_atoms.set_constraint(constraint=[fixed_line, fixed_com])
 
     _set_momenta_and_geometry(ase_atoms,
                               temp=init_temp if init_temp is not None else temp,
