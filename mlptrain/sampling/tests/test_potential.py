@@ -19,6 +19,8 @@ class HarmonicPotential(Calculator):
         derivative = np.zeros((len(atoms), 3))
 
         r = atoms.get_distance(0, 1)
+        if r < 10**(-7):
+            r = 10**(-7)
 
         x_dist, y_dist, z_dist = [atoms[0].position[j] - atoms[1].position[j]
                                   for j in range(3)]
