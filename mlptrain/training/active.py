@@ -117,6 +117,7 @@ def train(mlp:               'mlptrain.potentials._base.MLPotential',
 
         curr_n_train = mlp.n_train
 
+        # TODO: Not sure about the motivation for the extra time
         _add_active_configs(mlp,
                             init_config=(init_config if fix_init_config
                                          else mlp.training_data.lowest_energy),
@@ -255,6 +256,8 @@ def _gen_active_config(config:      'mlptrain.Configuration',
 
     md_time = 2 + n_calls**3 + float(extra_time)
 
+    # TODO: By construction seems like always len(traj) == n_backtrack + 1
+    #  => stride == 1 (In the case where n_steps >= n_backtrack)
     traj = run_mlp_md(config,
                       mlp=mlp,
                       temp=temp if curr_time > 0 else i_temp,
@@ -266,6 +269,7 @@ def _gen_active_config(config:      'mlptrain.Configuration',
 
     traj.t0 = curr_time  # Increment the initial time (t0)
 
+    # TODO: Unbiases the energy
     if 'bias' in kwargs and kwargs['bias'] is not None:
         for frame in traj:
             frame.energy.predicted -= kwargs['bias'](frame.ase_atoms)
@@ -274,13 +278,17 @@ def _gen_active_config(config:      'mlptrain.Configuration',
     selector(traj.final_frame, mlp, method_name=method_name, n_cores=n_cores)
 
     if selector.select:
+        # TODO: In case the selector is not based on energy the energy is
+        #  calculated, but if that's done for training why force is not
+        #  calculated too? (prob done for reason other than training)
         if traj.final_frame.energy.true is None:
             traj.final_frame.single_point(method_name)
 
         return traj.final_frame
 
     if selector.too_large:
-
+        # TODO: If I understand correctly what n_backtrack is, this should be
+        #  changed (i.e. stride should always be 1)
         logger.warning('Backtracking in the trajectory to find a suitable '
                        f'configuration in {selector.n_backtrack} steps')
         stride = max(1, len(traj)//selector.n_backtrack)
@@ -292,7 +300,7 @@ def _gen_active_config(config:      'mlptrain.Configuration',
                 return frame
 
         logger.error('Failed to backtrack to a suitable configuration')
-        # TODO: What frame is this?
+        # TODO: What frame is this? Probably should be the first frame
         return frame
 
     if curr_time + md_time > max_time:
