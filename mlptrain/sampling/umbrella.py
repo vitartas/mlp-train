@@ -422,48 +422,40 @@ class UmbrellaSampling:
         logger.info(f'Running Umbrella Sampling with {n_windows} window(s), '
                     f'{n_processes} window(s) are run in parallel')
 
-        with Pool(processes=n_processes) as pool:
+        for idx, ref in enumerate(zeta_refs):
 
-            for idx, ref in enumerate(zeta_refs):
+            kwargs_single = deepcopy(kwargs)
+            kwargs_single['idx'] = idx + 1
+            kwargs_single['ref'] = ref
 
-                # Without copy kwargs is overwritten at every iteration
-                kwargs_single = deepcopy(kwargs)
-                kwargs_single['idx'] = idx + 1
-                kwargs_single['ref'] = ref
+            bias = Bias(self.zeta_func, kappa=self.kappa, reference=ref)
 
-                bias = Bias(self.zeta_func, kappa=self.kappa, reference=ref)
+            if self._no_ok_frame_in(traj, ref):
+                _traj = window_trajs[idx-1]
+            else:
+                _traj = traj
 
-                if self._no_ok_frame_in(traj, ref):
-                    # Takes the trajectory of the previous window, .get() blocks
-                    # the main process until the previous window finishes
-                    _traj = window_processes[idx-1].get()
-                else:
-                    _traj = traj
+            init_frame = self._best_init_frame(bias, _traj)
 
-                init_frame = self._best_init_frame(bias, _traj)
+            window_traj = self._run_individual_window(frame=init_frame,
+                                                      mlp=mlp,
+                                                      temp=temp,
+                                                      interval=interval,
+                                                      dt=dt,
+                                                      bias=bias,
+                                                      kwargs=kwargs_single)
 
-                window_process = pool.apply_async(func=self._run_individual_window,
-                                                  args=(init_frame,
-                                                        mlp,
-                                                        temp,
-                                                        interval,
-                                                        dt,
-                                                        bias),
-                                                  kwds=kwargs_single)
-                window_processes.append(window_process)
-                biases.append(bias)
+            window_trajs.append(window_traj)
 
-            for window_process, bias in zip(window_processes, biases):
+        for window_traj, bias in zip(window_trajs, biases):
 
-                window_traj = window_process.get()
-                window = _Window(obs_zetas=self.zeta_func(window_traj),
-                                 bias=bias)
-                window.plot(min_zeta=min(zeta_refs),
-                            max_zeta=max(zeta_refs),
-                            plot_gaussian=True)
+            window = _Window(obs_zetas=self.zeta_func(window_traj),
+                             bias=bias)
+            window.plot(min_zeta=min(zeta_refs),
+                        max_zeta=max(zeta_refs),
+                        plot_gaussian=True)
 
-                self.windows.append(window)
-                window_trajs.append(window_traj)
+            self.windows.append(window)
 
         # Move .traj files into 'trajectories' folder and compute .xyz files
         self._move_and_save_files(window_trajs, save_sep, all_to_xyz)
