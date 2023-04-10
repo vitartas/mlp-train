@@ -470,7 +470,7 @@ class UmbrellaSampling:
 
         finish_umbrella = time.perf_counter()
         logger.info('Umbrella sampling done in '
-                    f'{(finish_umbrella - start_umbrella) / 60:.1f} m')
+                    f'{(finish_umbrella - start_umbrella)} s')
 
         return None
 
