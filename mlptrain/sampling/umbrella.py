@@ -445,6 +445,7 @@ class UmbrellaSampling:
                                                       **kwargs_single)
 
             window_trajs.append(window_traj)
+            biases.append(bias)
 
         for window_traj, bias in zip(window_trajs, biases):
 
