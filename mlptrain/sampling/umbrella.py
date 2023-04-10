@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.integrate import simpson
 from typing import Optional, List, Callable, Tuple
-from multiprocessing import Pool
 from copy import deepcopy
 from ase.io.trajectory import Trajectory as ASETrajectory
 from ase.io import write as ase_write
