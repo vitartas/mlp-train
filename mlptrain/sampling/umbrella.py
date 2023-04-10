@@ -442,7 +442,7 @@ class UmbrellaSampling:
                                                       interval=interval,
                                                       dt=dt,
                                                       bias=bias,
-                                                      kwargs=kwargs_single)
+                                                      **kwargs_single)
 
             window_trajs.append(window_traj)
 
