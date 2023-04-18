@@ -29,7 +29,7 @@ from mlptrain.utils import (
     move_files,
     convert_ase_time,
     convert_ase_energy,
-    convert_exponents,
+    convert_exponents
 )
 
 
@@ -986,7 +986,7 @@ class Metadynamics:
         fig, ax = plt.subplots()
         ax.plot(blocksizes, mean_stds, color='k')
 
-        ax.set_xlabel('Block Size')
+        ax.set_xlabel('Block size')
         ax.set_ylabel(r'$\left\langle\sigma_{\mu_{G}}\right\rangle$ / '
                       f'{convert_exponents(energy_units)}')
 

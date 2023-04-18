@@ -14,9 +14,15 @@ from mlptrain.sampling.bias import Bias
 from mlptrain.sampling.reaction_coord import DummyCoordinate
 from mlptrain.configurations import ConfigurationSet
 from mlptrain.sampling.md import run_mlp_md
-from mlptrain.utils import move_files, convert_ase_energy, convert_exponents
 from mlptrain.config import Config
 from mlptrain.log import logger
+from mlptrain.utils import (
+    move_files,
+    unique_name,
+    convert_ase_energy,
+    convert_exponents
+)
+
 
 
 class _Window:
@@ -142,6 +148,89 @@ class _Window:
             (float):
         """
         return self._bias.ref
+
+    def block_analysis(self, label: Optional[str] = None) -> None:
+        """
+        Split the trajectory into blocks and compute the standard error of the
+        mean zeta value over the blocks. Repeat for different block sizes and
+        plot the results
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            label: (str) String distinguishing a particular window, useful if
+                         block analysis is performed to all windows at once
+        """
+
+        logger.info('Performing block analysis'
+                    f'{f" for window {label}" if label is not None else ""}')
+
+        min_n_blocks = 5
+        min_blocksize = 10
+        blocksize_interval = 5
+        max_blocksize = len(self._obs_zetas) // min_n_blocks
+
+        if max_blocksize < min_blocksize:
+            raise ValueError('The simulation is too short to perform '
+                             'block analysis')
+
+        blocksizes = list(range(min_blocksize, max_blocksize + 1,
+                                blocksize_interval))
+
+        # Insert blocksize of 1
+        blocksizes.insert(0, 1)
+
+        std_errs = []
+        for blocksize in blocksizes:
+            n_blocks = len(self._obs_zetas) // blocksize
+            block_means = []
+
+            for block_idx in range(n_blocks):
+                start_idx = blocksize * block_idx
+                end_idx = blocksize * (block_idx + 1)
+                block_mean = np.mean(self._obs_zetas[start_idx:end_idx])
+                block_means.append(block_mean)
+
+            std_err = (1 / n_blocks) * np.std(block_means, ddof=1)
+            std_errs.append(std_err)
+
+        self._plot_block_analysis(blocksizes=blocksizes,
+                                  std_errs=std_errs,
+                                  label=label)
+        return None
+
+    @staticmethod
+    def _plot_block_analysis(blocksizes: List,
+                             std_errs:   List,
+                             label:      Optional[str] = None) -> None:
+        """
+        Plot block analysis of the window
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            label: (str) String distinguishing a particular window, useful if
+                         block analysis is performed to all windows at once
+        """
+
+        fig, ax = plt.subplots()
+        ax.plot(blocksizes, std_errs, color='k')
+
+        ax.set_xlabel('Block size')
+        ax.set_ylabel('$\sigma_{\mu_{\zeta}}$ / Å')
+
+        fig.tight_layout()
+
+        if label is None:
+            figname = 'block_analysis_window.pdf'
+
+        else:
+            figname = f'block_analysis_window_{label}.pdf'
+
+        fig.savefig(figname)
+        plt.close(fig)
+
+        return None
 
     @classmethod
     def from_file(cls, filename: str) -> '_Window':
@@ -581,8 +670,8 @@ class UmbrellaSampling:
              max_iterations:      int = 100000,
              n_bins:              int = 100,
              units:               str = 'kcal mol-1',
-             compute_uncertainty: bool = False
-             ) -> Tuple[np.ndarray, np.ndarray]:
+             compute_uncertainty: bool = False,
+             **kwargs) -> Tuple[np.ndarray, np.ndarray]:
         """
         Construct an unbiased distribution (on a grid) from a set of windows
 
@@ -602,6 +691,13 @@ class UmbrellaSampling:
             compute_uncertainty: (bool) If True compute free energy uncertainty
                                         using umbrella integration error
                                         propagation
+
+        ---------------
+        Keyword Arguments:
+
+            # TODO: change number
+            blocksize: (int) Block size to use in uncertainty quantification.
+                             If not supplied, a value of ? is used
 
         Returns:
             (np.ndarray, np.ndarray): Tuple containing the reaction coordinate
@@ -643,7 +739,8 @@ class UmbrellaSampling:
 
         # TODO: Compute uncertainties here, add result to save_free_energy
         if compute_uncertainty:
-            pass
+            self._attach_p_ui_values_to_windows(zetas)
+            self._compute_ui_uncertainty()
 
         self._save_free_energy(free_energies=self.free_energies(p),
                                zetas=zetas,
@@ -655,8 +752,8 @@ class UmbrellaSampling:
     def umbrella_integration(self,
                              n_bins:              int = 100,
                              units:               str = 'kcal mol-1',
-                             compute_uncertainty: bool = False
-                             ) -> Tuple[np.ndarray, np.ndarray]:
+                             compute_uncertainty: bool = False,
+                             **kwargs) -> Tuple[np.ndarray, np.ndarray]:
         """
         Perform umbrella integration on the umbrella windows to un-bias the
         probability distribution. Such that the the PMF becomes
@@ -679,6 +776,13 @@ class UmbrellaSampling:
             compute_uncertainty: (bool) If True compute free energy uncertainty
                                         using umbrella integration error
                                         propagation
+
+        ---------------
+        Keyword Arguments:
+
+            # TODO: change number
+            blocksize: (int) Block size to use in uncertainty quantification.
+                             If not supplied, a value of ? is used
 
         Returns:
 
@@ -714,7 +818,7 @@ class UmbrellaSampling:
 
         # TODO: could compute uncertainty here (a new list)
         if compute_uncertainty:
-            pass
+            self._compute_ui_uncertainty(kwargs)
 
         self._save_free_energy(free_energies=free_energies,
                                zetas=zetas,
@@ -746,6 +850,31 @@ class UmbrellaSampling:
 
         for i, (window, p_ui_i) in enumerate(zip(self.windows, p_ui_list)):
             window.p_ui = p_ui_i
+
+        return None
+
+    def compute_ui_uncertainty(self, **kwargs) -> None:
+        """doc"""
+
+        return None
+
+    def window_block_analysis(self) -> None:
+        """
+        Perform block analysis on the trajectories of each window and plot the
+        results
+        """
+
+        with Pool(processes=Config.n_cores) as pool:
+
+            for i, window in enumerate(self.windows, start=1):
+                pool.apply_async(func=window.block_analysis, args=(i,))
+
+            pool.close()
+            pool.join()
+
+        move_files(moved_substrings=['block_analysis_window_\d+\.pdf'],
+                   dst_folder='window_block_analysis',
+                   regex=True)
 
         return None
 
@@ -850,8 +979,14 @@ class UmbrellaSampling:
         ax.set_ylabel(f'ΔG / {convert_exponents(units)}')
 
         fig.tight_layout()
-        fig.savefig('umbrella_free_energy.pdf')
+
+        figname = 'umbrella_free_energy.pdf'
+        if os.path.exists(figname):
+            os.rename(figname, unique_name(figname))
+
+        fig.savefig(figname)
         plt.close(fig)
+
         return None
 
     def save(self, folder_name: str = 'umbrella') -> None:
