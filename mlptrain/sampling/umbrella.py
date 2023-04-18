@@ -737,13 +737,16 @@ class UmbrellaSampling:
 
             p_prev = p
 
-        # TODO: Compute uncertainties here, add result to save_free_energy
         if compute_uncertainty:
-            self._attach_p_ui_values_to_windows(zetas)
-            self._compute_ui_uncertainty()
+            self._attach_p_ui_values_to_windows(zetas=zetas)
+            uncertainties = self._compute_ui_uncertainty(zetas=zetas, **kwargs)
+
+        else:
+            uncertainties = None
 
         self._save_free_energy(free_energies=self.free_energies(p),
                                zetas=zetas,
+                               uncertainties=uncertainties,
                                units=units)
         self.plot_free_energy()
 
@@ -800,7 +803,7 @@ class UmbrellaSampling:
         zetas = np.linspace(self.zeta_refs[0], self.zeta_refs[-1], num=n_bins)
         zetas_spacing = zetas[1] - zetas[0]
 
-        self._attach_p_ui_values_to_windows(zetas)
+        self._attach_p_ui_values_to_windows(zetas=zetas)
 
         dA_dq = np.zeros_like(zetas)
         for i, window in enumerate(self.windows):
@@ -816,12 +819,15 @@ class UmbrellaSampling:
                                            zetas[:i],
                                            dx=zetas_spacing)
 
-        # TODO: could compute uncertainty here (a new list)
         if compute_uncertainty:
-            self._compute_ui_uncertainty(kwargs)
+            uncertainties = self._compute_ui_uncertainty(zetas=zetas, **kwargs)
+
+        else:
+            uncertainties = None
 
         self._save_free_energy(free_energies=free_energies,
                                zetas=zetas,
+                               uncertainties=uncertainties,
                                units=units)
         self.plot_free_energy()
 
@@ -853,10 +859,75 @@ class UmbrellaSampling:
 
         return None
 
-    def compute_ui_uncertainty(self, **kwargs) -> None:
-        """doc"""
+    def _compute_ui_uncertainty(self, zetas, **kwargs) -> np.ndarray:
+        """
+        # TODO: cite kastner paper
+        Compute free energy variance using umbrella integration error
+        propagation. It should mainly be used when combining windows with
+        umbrella integration, but in many cases the variance is a good
+        estimate for WHAM free energy too (care must be taken as the UI
+        variance estimate cannot account for the growth of WHAM free energy
+        statistical error when a large number of bins is used)
 
-        return None
+        -----------------------------------------------------------------------
+        Arguments:
+
+            zetas: (np.ndarray) Discretised reaction coordinate
+
+        ---------------
+        Keyword Arguments:
+
+            # TODO: change number
+            blocksize: (int) Block size to use in uncertainty quantification.
+                             If not supplied, a value of ? is used
+
+        Returns:
+
+            (np.ndarray): Free energy variance with the same shape as zetas
+        """
+
+        # TODO: change default value
+        blocksize = kwargs.get('blocksize', 100)
+
+        var_dA_dq = 0
+        mean_std_q_i = 0
+        for i, window in enumerate(self.windows):
+
+            # TODO: prob window method, can also change in block analysis
+            obs_zetas = window._obs_zetas
+
+            n_blocks = len(obs_zetas) // blocksize
+            block_means = []
+
+            for block_idx in range(n_blocks):
+                start_idx = blocksize * block_idx
+                end_idx = blocksize * (block_idx + 1)
+
+                block_mean = np.mean(obs_zetas[start_idx:end_idx])
+                block_means.append(block_mean)
+
+            mean_q_i = np.mean(block_means)
+            std_q_i = np.std(block_means, ddof=1)
+            mean_std_q_i += std_q_i
+
+            # TODO: kastner eq 6 using blocks
+            var_dAi_dq = ((2 * (zetas - mean_q_i)**2 + std_q_i**2)
+                          / (n_blocks * self.beta**2 * std_q_i**4))
+
+            # TODO: kastner eq 9
+            var_dA_dq += window.p_ui**2 * var_dAi_dq
+
+        mean_std_q_i /= len(self.windows)
+
+        var_A = np.zeros_like(zetas)
+        for i, zeta in enumerate(zetas):
+
+            # TODO: kastner eq 15
+            var_A[i] = (np.mean(var_dA_dq[:i])
+                        * (np.sqrt(2 * np.pi) * (zetas[i] - zetas[0])
+                           * mean_std_q_i - 2 * mean_std_q_i**2))
+
+        return var_A
 
     def window_block_analysis(self) -> None:
         """
