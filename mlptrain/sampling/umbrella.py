@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.integrate import simpson
-from typing import Optional, List, Callable, Tuple
+from typing import Optional, Callable, List, Sequence, Tuple
 from multiprocessing import Pool
 from copy import deepcopy
 from ase.io.trajectory import Trajectory as ASETrajectory
@@ -46,6 +46,9 @@ class _Window:
         self.bin_edges:     Optional[np.ndarray] = None
         self.bias_energies: Optional[np.ndarray] = None
         self.hist:          Optional[np.ndarray] = None
+
+        # Weight used in umbrella integration
+        self.p_ui: Optional[float] = None
 
         self.free_energy = 0.0
 
@@ -574,9 +577,11 @@ class UmbrellaSampling:
         return 1.0 / (k_b * self.temp)
 
     def wham(self,
-             tol:            float = 1E-3,
-             max_iterations: int = 100000,
-             n_bins:         int = 100
+             tol:                 float = 1E-3,
+             max_iterations:      int = 100000,
+             n_bins:              int = 100,
+             units:               str = 'kcal mol-1',
+             compute_uncertainty: bool = False
              ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Construct an unbiased distribution (on a grid) from a set of windows
@@ -591,6 +596,12 @@ class UmbrellaSampling:
             n_bins: Number of bins to use in the histogram (minus one) and
                     the number of reaction coordinate values plotted and
                     returned
+
+            units: (str) Energy units, available: eV, kcal mol-1, kj mol-1
+
+            compute_uncertainty: (bool) If True compute free energy uncertainty
+                                        using umbrella integration error
+                                        propagation
 
         Returns:
             (np.ndarray, np.ndarray): Tuple containing the reaction coordinate
@@ -630,12 +641,21 @@ class UmbrellaSampling:
 
             p_prev = p
 
-        _plot_and_save_free_energy(free_energies=self.free_energies(p),
-                                   zetas=zetas)
+        # TODO: Compute uncertainties here, add result to save_free_energy
+        if compute_uncertainty:
+            pass
+
+        self._save_free_energy(free_energies=self.free_energies(p),
+                               zetas=zetas,
+                               units=units)
+        self.plot_free_energy()
+
         return zetas, self.free_energies(p)
 
     def umbrella_integration(self,
-                             n_bins: int = 100
+                             n_bins:              int = 100,
+                             units:               str = 'kcal mol-1',
+                             compute_uncertainty: bool = False
                              ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Perform umbrella integration on the umbrella windows to un-bias the
@@ -654,6 +674,12 @@ class UmbrellaSampling:
                     the number of reaction coordinate values plotted and
                     returned
 
+            units: (str) Energy units, available: eV, kcal mol-1, kj mol-1
+
+            compute_uncertainty: (bool) If True compute free energy uncertainty
+                                        using umbrella integration error
+                                        propagation
+
         Returns:
 
             (np.ndarray, np.ndarray): Tuple containing the reaction coordinate
@@ -670,18 +696,13 @@ class UmbrellaSampling:
         zetas = np.linspace(self.zeta_refs[0], self.zeta_refs[-1], num=n_bins)
         zetas_spacing = zetas[1] - zetas[0]
 
+        self._attach_p_ui_values_to_windows(zetas)
+
         dA_dq = np.zeros_like(zetas)
-        free_energies = np.zeros_like(zetas)
-        sum_a = 0
-
         for i, window in enumerate(self.windows):
-            a_i = window.n * window.gaussian_pdf(zetas)
-            dA_dq += a_i * window.dAu_dq(zetas, beta=beta)
-            sum_a += a_i
+            dA_dq += window.p_ui * window.dAu_dq(zetas, beta=beta)
 
-        # Normalise
-        dA_dq /= sum_a
-
+        free_energies = np.zeros_like(zetas)
         for i, _ in enumerate(zetas):
             if i == 0:
                 free_energies[i] = 0.0
@@ -691,9 +712,147 @@ class UmbrellaSampling:
                                            zetas[:i],
                                            dx=zetas_spacing)
 
-        _plot_and_save_free_energy(free_energies=free_energies,
-                                   zetas=zetas)
+        # TODO: could compute uncertainty here (a new list)
+        if compute_uncertainty:
+            pass
+
+        self._save_free_energy(free_energies=free_energies,
+                               zetas=zetas,
+                               units=units)
+        self.plot_free_energy()
+
         return zetas, free_energies
+
+    def _attach_p_ui_values_to_windows(self, zetas: np.ndarray) -> None:
+        """
+        Compute p_ui values for every window, (not to be confused with
+        p values that appear in WHAM), which are used in umbrella integration
+        and uncertainty quantification, and attach those values to the
+        corresponding windows
+
+        ----------------------------------------------------------------------
+        Arguments:
+
+            zetas: (np.ndarray) Discretised reaction coordinate
+        """
+
+        a_list = []
+        for i, window in enumerate(self.windows):
+            a_i = window.n * window.gaussian_pdf(zetas)
+            a_list.append(a_i)
+
+        sum_a = sum(a_list)
+        p_ui_list = [a_i / sum_a for a_i in a_list]
+
+        for i, (window, p_ui_i) in enumerate(zip(self.windows, p_ui_list)):
+            window.p_ui = p_ui_i
+
+        return None
+
+    @staticmethod
+    def _save_free_energy(free_energies: np.ndarray,
+                          zetas:         np.ndarray,
+                          uncertainties: Optional[np.ndarray] = None,
+                          units:         str = 'kcal mol-1'
+                          ) -> None:
+        """
+        Save the free energy (and uncertainty) as a .txt file
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            free_energies: (np.ndarray) Free energy values at every value of
+                                        the reaction coordinate
+
+            zetas: (np.ndarray) Values of the reaction coordinate
+
+            uncertainties: (np.ndarray) Standard deviation of the free energy
+                                    at every value of the reaction coordinate
+
+            units: (str) Energy units, available: eV, kcal mol-1, kj mol-1
+        """
+
+        free_energies = convert_ase_energy(free_energies, units)
+        rel_free_energies = free_energies - min(free_energies)
+
+        with open(f'umbrella_free_energy.txt', 'w') as outfile:
+            print(f'# Units: {units.lower()}', file=outfile)
+
+            if uncertainties is None:
+                print('# Reaction_coordinate Free_energy',
+                      file=outfile)
+
+                data = zip(zetas, rel_free_energies)
+                for zeta, free_energy in data:
+                    print(zeta, free_energy, file=outfile)
+
+            else:
+                print('# Reaction_coordinate Free_energy Uncertainty',
+                      file=outfile)
+
+                data = zip(zetas, rel_free_energies, uncertainties)
+                for zeta, free_energy, uncertainty in data:
+                    print(zeta, free_energy, uncertainty, file=outfile)
+
+        return None
+
+    @staticmethod
+    def plot_free_energy(filename:         Optional[str] = None,
+                         error_bar:        Optional[Sequence] = None,
+                         confidence_level: float = 0.95) -> None:
+        """
+        Plot the free energy against the reaction coordinate
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            filename: (str) Name of the file containing reaction coordinate
+                            values, free energies, and uncertainties
+
+            error_bar: (Sequence) Reaction coordinate values at which to
+                                  attach error bars
+
+            confidence_level: (float) Specifies what confidence level to use
+                                      in plots (probability for free energy
+                                      to lie within the error bar)
+        """
+
+        if filename is None:
+            filename = 'umbrella_free_energy.txt'
+            if not os.path.exists(filename):
+                raise ValueError('File for plotting the free energy cannot be '
+                                 'found, make sure to compute the free energy '
+                                 'before running this method')
+
+        with open(filename, 'r') as f:
+            # '# Units ...'
+            first_line = f.readline()
+            units = ' '.join(first_line.split()[2:])
+
+            # '# Reaction_coordinate Free_energy Uncertainty'
+            second_line = f.readline()
+            uncertainty_present = second_line.split()[-1] == 'Uncertainty'
+
+        zetas = np.loadtxt(filename, usecols=0)
+        rel_free_energies = np.loadtxt(filename, usecols=1)
+
+        fig, ax = plt.subplots()
+        ax.plot(zetas, rel_free_energies, color='k')
+
+        if error_bar is not None:
+            if not uncertainty_present:
+                logger.warning('Uncertainties not found in the file, not '
+                               'adding error bars to the plot')
+
+            # TODO: add error bars
+
+        ax.set_xlabel('Reaction coordinate / Å')
+        ax.set_ylabel(f'ΔG / {convert_exponents(units)}')
+
+        fig.tight_layout()
+        fig.savefig('umbrella_free_energy.pdf')
+        plt.close(fig)
+        return None
 
     def save(self, folder_name: str = 'umbrella') -> None:
         """
@@ -811,35 +970,3 @@ class _FittedGaussian:
         """Standard deviation of the Normal distribution"""
         return self.params[2]
 
-
-def _plot_and_save_free_energy(free_energies,
-                               zetas,
-                               units='kcal mol-1') -> None:
-    """
-    Plots the free energy against the reaction coordinate and saves
-    the corresponding values as a .txt file
-
-    -----------------------------------------------------------------------
-    Arguments:
-
-        zetas: Values of the reaction coordinate
-    """
-
-    free_energies = convert_ase_energy(free_energies, units)
-
-    rel_free_energies = free_energies - min(free_energies)
-
-    fig, ax = plt.subplots()
-    ax.plot(zetas, rel_free_energies, color='k')
-
-    with open(f'umbrella_free_energy.txt', 'w') as outfile:
-        for zeta, free_energy in zip(zetas, rel_free_energies):
-            print(zeta, free_energy, file=outfile)
-
-    ax.set_xlabel('Reaction coordinate / Å')
-    ax.set_ylabel(f'ΔG / {convert_exponents(units)}')
-
-    fig.tight_layout()
-    fig.savefig('umbrella_free_energy.pdf')
-    plt.close(fig)
-    return None
