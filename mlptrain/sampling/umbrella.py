@@ -205,7 +205,7 @@ class _Window:
                              std_errs:   List,
                              label:      Optional[str] = None) -> None:
         """
-        Plot block analysis of the window
+        Plot block averaging analysis of the window
 
         -----------------------------------------------------------------------
         Arguments:
@@ -902,17 +902,11 @@ class UmbrellaSampling:
             return None
 
         var_dA_dq = 0
-
         for i, window in enumerate(self.windows):
+
             obs_zetas = window._obs_zetas
             mean_q_i = window.gaussian_pdf.mean
             std_q_i = window.gaussian_pdf.std
-
-            # TODO: remove
-            logger.info(f'mean_q_{i} (fitted): {mean_q_i}')
-            logger.info(f'mean_q_{i} (sampled): {np.mean(obs_zetas)}')
-            logger.info(f'std_q_{i} (fitted): {std_q_i}')
-            logger.info(f'std_q_{i} (sampled): {np.std(obs_zetas, ddof=1)}')
 
             n_blocks = len(obs_zetas) // blocksize
             block_means = []
@@ -924,27 +918,7 @@ class UmbrellaSampling:
                 block_mean = np.mean(obs_zetas[start_idx:end_idx])
                 block_means.append(block_mean)
 
-            # block_hist, _ = np.histogram(block_means, bins=window.bin_edges)
-            # block_gaussian = _FittedGaussian()
-            #
-            # try:
-            #     block_gaussian.params, _ = curve_fit(block_gaussian.value,
-            #                                          window.bin_centres,
-            #                                          block_hist,
-            #                                          p0=[1.0, 1.0, 1.0],
-            #                                          maxfev=10000)
-            #
-            # except RuntimeError:
-            #     logger.warning('Could not fit gaussian to a block histogram, '
-            #                    'the UI uncertainty estimation is terminated')
-            #     return None
-            #
-            # block_std_q_i = block_gaussian.std
-
             block_std_q_i = np.std(block_means, ddof=1)
-
-            # TODO: remove
-            logger.info(f'block_std_q_{i} (sampled): {block_std_q_i}')
 
             var_mean_q_i = (1 / n_blocks) * block_std_q_i**2
             var_var_q_i = (2 / n_blocks) * block_std_q_i**4
@@ -957,12 +931,6 @@ class UmbrellaSampling:
             # [1] Equation 9
             var_dA_dq += window.p_ui**2 * var_dAi_dq
 
-        # TODO: remove
-        for i, window in enumerate(self.windows):
-            logger.info(f'window {i}: mean {window.gaussian_pdf.mean}, '
-                        f'std {window.gaussian_pdf.std}')
-        logger.info(f'old average_std: {np.mean([w.gaussian_pdf.std for w in self.windows])}')
-
         var_A = np.zeros_like(zetas)
         for i, _ in enumerate(zetas):
 
@@ -974,15 +942,10 @@ class UmbrellaSampling:
             upper_edge = zetas[i]
             average_std = self._compute_average_std_in_interval(lower_edge,
                                                                 upper_edge)
-            # TODO: remove
-            logger.info(f'average_std: {average_std}')
-
             # [1] Equation 15
             var_A[i] = (np.mean(var_dA_dq[:i])
                         * (np.sqrt(2 * np.pi) * (upper_edge - lower_edge)
                            * average_std - 2 * average_std**2))
-
-            logger.info(f'var_A[{i}]: {var_A[i]}')
 
         return np.sqrt(np.abs(var_A))
 
@@ -1007,13 +970,9 @@ class UmbrellaSampling:
 
         integrals = np.zeros(len(self.windows))
         for i, window in enumerate(self.windows):
-
             distr = norm(loc=window.gaussian_pdf.mean,
                          scale=window.gaussian_pdf.std)
             integral = distr.cdf(upper_edge) - distr.cdf(lower_edge)
-            # TODO: remove
-            logger.info(f'window {i}: integral {integral}')
-
             integrals[i] = integral
 
         normalised_integrals = integrals / np.sum(integrals)
@@ -1026,8 +985,8 @@ class UmbrellaSampling:
 
     def window_block_analysis(self) -> None:
         """
-        Perform block analysis on the trajectories of each window and plot the
-        results
+        Perform block averaging analysis on the trajectories of each window and
+        plot the results
         """
 
         with Pool(processes=Config.n_cores) as pool:
