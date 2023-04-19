@@ -1,10 +1,12 @@
 import os
 import re
 import time
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.integrate import simpson
+from scipy.stats import norm
 from typing import Optional, Callable, List, Sequence, Tuple
 from multiprocessing import Pool
 from copy import deepcopy
@@ -22,7 +24,6 @@ from mlptrain.utils import (
     convert_ase_energy,
     convert_exponents
 )
-
 
 
 class _Window:
@@ -165,7 +166,7 @@ class _Window:
         logger.info('Performing block analysis'
                     f'{f" for window {label}" if label is not None else ""}')
 
-        min_n_blocks = 5
+        min_n_blocks = 10
         min_blocksize = 10
         blocksize_interval = 5
         max_blocksize = len(self._obs_zetas) // min_n_blocks
@@ -217,7 +218,7 @@ class _Window:
         ax.plot(blocksizes, std_errs, color='k')
 
         ax.set_xlabel('Block size')
-        ax.set_ylabel('$\sigma_{\mu_{\zeta}}$ / Å')
+        ax.set_ylabel(r'$\sigma_{\mu_{\zeta}}$ / Å')
 
         fig.tight_layout()
 
@@ -695,9 +696,8 @@ class UmbrellaSampling:
         ---------------
         Keyword Arguments:
 
-            # TODO: change number
             blocksize: (int) Block size to use in uncertainty quantification.
-                             If not supplied, a value of ? is used
+                             If not supplied, a value of 1000 is used
 
         Returns:
             (np.ndarray, np.ndarray): Tuple containing the reaction coordinate
@@ -783,9 +783,8 @@ class UmbrellaSampling:
         ---------------
         Keyword Arguments:
 
-            # TODO: change number
             blocksize: (int) Block size to use in uncertainty quantification.
-                             If not supplied, a value of ? is used
+                             If not supplied, a value of 1000 is used
 
         Returns:
 
@@ -813,11 +812,11 @@ class UmbrellaSampling:
         for i, _ in enumerate(zetas):
             if i == 0:
                 free_energies[i] = 0.0
+                continue
 
-            else:
-                free_energies[i] = simpson(dA_dq[:i],
-                                           zetas[:i],
-                                           dx=zetas_spacing)
+            free_energies[i] = simpson(dA_dq[:i],
+                                       zetas[:i],
+                                       dx=zetas_spacing)
 
         if compute_uncertainty:
             uncertainties = self._compute_ui_uncertainty(zetas=zetas, **kwargs)
@@ -859,15 +858,19 @@ class UmbrellaSampling:
 
         return None
 
-    def _compute_ui_uncertainty(self, zetas, **kwargs) -> np.ndarray:
+    def _compute_ui_uncertainty(self,
+                                zetas: np.ndarray,
+                                **kwargs) -> Optional[np.ndarray]:
         """
-        # TODO: cite kastner paper
-        Compute free energy variance using umbrella integration error
-        propagation. It should mainly be used when combining windows with
-        umbrella integration, but in many cases the variance is a good
-        estimate for WHAM free energy too (care must be taken as the UI
-        variance estimate cannot account for the growth of WHAM free energy
-        statistical error when a large number of bins is used)
+        Compute free energy standard deviation using umbrella integration
+        error propagation. It should mainly be used when windows are combined
+        using umbrella integration, but in many cases the UI standard deviation
+        is a good estimate for WHAM free energy too (care must be taken as the
+        UI standard deviation cannot account for the growth of WHAM free energy
+        statistical error when a large number of bins is used)[1]
+
+        [1] Kastner, J., & Thiel, W. (2006). Journal of Chemical Physics,
+            124(23), 234106. https://doi.org/10.1063/1.2206775
 
         -----------------------------------------------------------------------
         Arguments:
@@ -877,57 +880,149 @@ class UmbrellaSampling:
         ---------------
         Keyword Arguments:
 
-            # TODO: change number
             blocksize: (int) Block size to use in uncertainty quantification.
-                             If not supplied, a value of ? is used
+                             If not supplied, a value of 1000 is used
 
         Returns:
 
-            (np.ndarray): Free energy variance with the same shape as zetas
+            (np.ndarray): Free energy standard deviation with the same shape
+                          as zetas
         """
 
-        # TODO: change default value
-        blocksize = kwargs.get('blocksize', 100)
+        blocksize = kwargs.get('blocksize', 1000)
+        min_n_blocks = 10
+        n_obs_zetas = min(len(window._obs_zetas) for window in self.windows)
+        max_blocksize = n_obs_zetas // min_n_blocks
+        if blocksize > max_blocksize:
+            logger.warning('Simulation is too short to get a good estimate '
+                           'of the UI uncertainties. Either run a longer US '
+                           'simulation, or change the default block size '
+                           '(making sure the blocks are not correlated)')
+
+            return None
 
         var_dA_dq = 0
-        mean_std_q_i = 0
-        for i, window in enumerate(self.windows):
 
-            # TODO: prob window method, can also change in block analysis
+        for i, window in enumerate(self.windows):
             obs_zetas = window._obs_zetas
+            mean_q_i = window.gaussian_pdf.mean
+            std_q_i = window.gaussian_pdf.std
+
+            # TODO: remove
+            logger.info(f'mean_q_{i} (fitted): {mean_q_i}')
+            logger.info(f'mean_q_{i} (sampled): {np.mean(obs_zetas)}')
+            logger.info(f'std_q_{i} (fitted): {std_q_i}')
+            logger.info(f'std_q_{i} (sampled): {np.std(obs_zetas, ddof=1)}')
 
             n_blocks = len(obs_zetas) // blocksize
             block_means = []
 
             for block_idx in range(n_blocks):
                 start_idx = blocksize * block_idx
-                end_idx = blocksize * (block_idx + 1)
+                end_idx = start_idx + blocksize
 
                 block_mean = np.mean(obs_zetas[start_idx:end_idx])
                 block_means.append(block_mean)
 
-            mean_q_i = np.mean(block_means)
-            std_q_i = np.std(block_means, ddof=1)
-            mean_std_q_i += std_q_i
+            # block_hist, _ = np.histogram(block_means, bins=window.bin_edges)
+            # block_gaussian = _FittedGaussian()
+            #
+            # try:
+            #     block_gaussian.params, _ = curve_fit(block_gaussian.value,
+            #                                          window.bin_centres,
+            #                                          block_hist,
+            #                                          p0=[1.0, 1.0, 1.0],
+            #                                          maxfev=10000)
+            #
+            # except RuntimeError:
+            #     logger.warning('Could not fit gaussian to a block histogram, '
+            #                    'the UI uncertainty estimation is terminated')
+            #     return None
+            #
+            # block_std_q_i = block_gaussian.std
 
-            # TODO: kastner eq 6 using blocks
-            var_dAi_dq = ((2 * (zetas - mean_q_i)**2 + std_q_i**2)
-                          / (n_blocks * self.beta**2 * std_q_i**4))
+            block_std_q_i = np.std(block_means, ddof=1)
 
-            # TODO: kastner eq 9
+            # TODO: remove
+            logger.info(f'block_std_q_{i} (sampled): {block_std_q_i}')
+
+            var_mean_q_i = (1 / n_blocks) * block_std_q_i**2
+            var_var_q_i = (2 / n_blocks) * block_std_q_i**4
+
+            # [1] Equation 5
+            var_dAi_dq = ((1 / (self.beta**2 * std_q_i**4))
+                          * (var_mean_q_i + ((zetas - mean_q_i)**2
+                             * var_var_q_i) / std_q_i**4))
+
+            # [1] Equation 9
             var_dA_dq += window.p_ui**2 * var_dAi_dq
 
-        mean_std_q_i /= len(self.windows)
+        # TODO: remove
+        for i, window in enumerate(self.windows):
+            logger.info(f'window {i}: mean {window.gaussian_pdf.mean}, '
+                        f'std {window.gaussian_pdf.std}')
+        logger.info(f'old average_std: {np.mean([w.gaussian_pdf.std for w in self.windows])}')
 
         var_A = np.zeros_like(zetas)
-        for i, zeta in enumerate(zetas):
+        for i, _ in enumerate(zetas):
 
-            # TODO: kastner eq 15
+            if i == 0:
+                var_A[i] = 0.0
+                continue
+
+            lower_edge = zetas[0]
+            upper_edge = zetas[i]
+            average_std = self._compute_average_std_in_interval(lower_edge,
+                                                                upper_edge)
+            # TODO: remove
+            logger.info(f'average_std: {average_std}')
+
+            # [1] Equation 15
             var_A[i] = (np.mean(var_dA_dq[:i])
-                        * (np.sqrt(2 * np.pi) * (zetas[i] - zetas[0])
-                           * mean_std_q_i - 2 * mean_std_q_i**2))
+                        * (np.sqrt(2 * np.pi) * (upper_edge - lower_edge)
+                           * average_std - 2 * average_std**2))
 
-        return var_A
+            logger.info(f'var_A[{i}]: {var_A[i]}')
+
+        return np.sqrt(np.abs(var_A))
+
+    def _compute_average_std_in_interval(self,
+                                         lower_edge: float,
+                                         upper_edge: float
+                                         ) -> float:
+        """
+        Compute average of standard deviations over the windows contributing
+        to the interval, used in [1] Equation 15
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            lower_edge: (float) Lowest value of the reaction coordinate, which
+                                is the lower edge of the interval
+
+            upper_edge: (float) Value of the reaction coordinate at which the
+                                free energy is calculated, it is the upper edge
+                                of the interval
+        """
+
+        integrals = np.zeros(len(self.windows))
+        for i, window in enumerate(self.windows):
+
+            distr = norm(loc=window.gaussian_pdf.mean,
+                         scale=window.gaussian_pdf.std)
+            integral = distr.cdf(upper_edge) - distr.cdf(lower_edge)
+            # TODO: remove
+            logger.info(f'window {i}: integral {integral}')
+
+            integrals[i] = integral
+
+        normalised_integrals = integrals / np.sum(integrals)
+
+        average_std = 0
+        for window, integral in zip(self.windows, normalised_integrals):
+            average_std += integral * window.gaussian_pdf.std
+
+        return average_std
 
     def window_block_analysis(self) -> None:
         """
@@ -943,7 +1038,7 @@ class UmbrellaSampling:
             pool.close()
             pool.join()
 
-        move_files(moved_substrings=['block_analysis_window_\d+\.pdf'],
+        move_files(moved_substrings=[r'block_analysis_window_\d+\.pdf'],
                    dst_folder='window_block_analysis',
                    regex=True)
 
@@ -975,7 +1070,11 @@ class UmbrellaSampling:
         free_energies = convert_ase_energy(free_energies, units)
         rel_free_energies = free_energies - min(free_energies)
 
-        with open(f'umbrella_free_energy.txt', 'w') as outfile:
+        filename = 'umbrella_free_energy.txt'
+        if os.path.exists(filename):
+            os.rename(filename, unique_name(filename))
+
+        with open(filename, 'w') as outfile:
             print(f'# Units: {units.lower()}', file=outfile)
 
             if uncertainties is None:
@@ -990,6 +1089,7 @@ class UmbrellaSampling:
                 print('# Reaction_coordinate Free_energy Uncertainty',
                       file=outfile)
 
+                uncertainties = convert_ase_energy(uncertainties, units)
                 data = zip(zetas, rel_free_energies, uncertainties)
                 for zeta, free_energy, uncertainty in data:
                     print(zeta, free_energy, uncertainty, file=outfile)
@@ -1024,6 +1124,8 @@ class UmbrellaSampling:
                                  'found, make sure to compute the free energy '
                                  'before running this method')
 
+        logger.info(f'Plotting US free energy using {filename}')
+
         with open(filename, 'r') as f:
             # '# Units ...'
             first_line = f.readline()
@@ -1040,11 +1142,32 @@ class UmbrellaSampling:
         ax.plot(zetas, rel_free_energies, color='k')
 
         if error_bar is not None:
+
             if not uncertainty_present:
                 logger.warning('Uncertainties not found in the file, not '
                                'adding error bars to the plot')
 
-            # TODO: add error bars
+            else:
+                zetas_idxs = []
+                for zeta in error_bar:
+                    if zeta < zetas[0] or zeta > zetas[-1]:
+                        logger.warning(f'Reaction coordinate value {zeta} Å '
+                                       f'is out of range for error bar '
+                                       f'attachment')
+                        continue
+
+                    zetas_idxs.append(np.searchsorted(zetas, zeta))
+
+                uncertainties = np.loadtxt(filename, usecols=2)
+                conf_interval = norm.interval(confidence_level,
+                                              loc=0,
+                                              scale=uncertainties[zetas_idxs])
+
+                ax.errorbar(x=zetas[zetas_idxs],
+                            y=rel_free_energies[zetas_idxs],
+                            yerr=np.abs(conf_interval),
+                            color='k',
+                            ls='none')
 
         ax.set_xlabel('Reaction coordinate / Å')
         ax.set_ylabel(f'ΔG / {convert_exponents(units)}')
@@ -1174,5 +1297,4 @@ class _FittedGaussian:
     @property
     def std(self) -> float:
         """Standard deviation of the Normal distribution"""
-        return self.params[2]
-
+        return np.abs(self.params[2])
