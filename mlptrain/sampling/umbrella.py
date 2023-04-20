@@ -1170,34 +1170,6 @@ class UmbrellaSampling:
                             alpha=0.3,
                             label='Confidence interval')
 
-        if error_bar is not None:
-
-            if not uncertainty_present:
-                logger.warning('Uncertainties not found in the file, not '
-                               'adding error bars to the plot')
-
-            else:
-                zetas_idxs = []
-                for zeta in error_bar:
-                    if zeta < zetas[0] or zeta > zetas[-1]:
-                        logger.warning(f'Reaction coordinate value {zeta} Å '
-                                       f'is out of range for error bar '
-                                       f'attachment')
-                        continue
-
-                    zetas_idxs.append(np.searchsorted(zetas, zeta))
-
-                uncertainties = np.loadtxt(filename, usecols=2)
-                conf_interval = norm.interval(confidence_level,
-                                              loc=0,
-                                              scale=uncertainties[zetas_idxs])
-
-                ax.errorbar(x=zetas[zetas_idxs],
-                            y=rel_free_energies[zetas_idxs],
-                            yerr=np.abs(conf_interval),
-                            color='k',
-                            ls='none')
-
         ax.set_xlabel('Reaction coordinate / Å')
         ax.set_ylabel(f'ΔG / {convert_exponents(units)}')
 
