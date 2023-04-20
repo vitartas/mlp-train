@@ -73,8 +73,21 @@ class _Window:
 
         return None
 
-    def set_bin_edges(self, outer_zeta_refs, n_bins) -> None:
-        """Compute and store an array with zeta values at bin edges"""
+    def set_bin_edges(self,
+                      outer_zeta_refs: Tuple[float, float],
+                      n_bins:          int
+                      ) -> None:
+        """
+        Compute and store an array with zeta values at bin edges
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            outer_zeta_refs: (Tuple) Left-most and right-most reaction
+                                     reaction coordinate values
+
+            n_bins: (int) number of bins to use in the histogram
+        """
 
         lmost_edge, rmost_edge = outer_zeta_refs
         _bin_edges = np.linspace(lmost_edge, rmost_edge, num=n_bins+1)
@@ -121,8 +134,24 @@ class _Window:
 
         return int(np.sum(self.hist))
 
-    def dAu_dq(self, zetas, beta):
-        """PMF from a single window"""
+    def dA_dq(self,
+              zetas: np.ndarray,
+              beta:  float
+              ) -> np.ndarray:
+        """
+        PMF from a single window
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            zetas: (np.ndarray) Discretised reaction coordinate
+
+            beta: (float) β = 1 / (k_B T)
+
+        Returns:
+
+            (np.ndarray): PMF from a single window
+        """
 
         if self.gaussian_pdf is None:
             raise TypeError('Cannot estimate PMF if the window does not '
@@ -134,10 +163,61 @@ class _Window:
         zeta_ref = self.zeta_ref
 
         # Equation 8.8.21 from Tuckerman, p. 344
-        _dAu_dq = ((1.0 / beta) * (zetas - mean_zeta_b) / (std_zeta_b**2)
-                   - kappa * (zetas - zeta_ref))
+        _dA_dq = ((1.0 / beta) * (zetas - mean_zeta_b) / (std_zeta_b**2)
+                  - kappa * (zetas - zeta_ref))
 
-        return _dAu_dq
+        return _dA_dq
+
+    def var_dA_dq(self,
+                  zetas:     np.ndarray,
+                  beta:      float,
+                  blocksize: int
+                  ) -> np.ndarray:
+        """
+        Variance of PMF from a single window [1]
+
+        [1] Kastner, J., & Thiel, W. (2006). Journal of Chemical Physics,
+            124(23), 234106. https://doi.org/10.1063/1.2206775
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            zetas: (np.ndarray) Discretised reaction coordinate
+
+            beta: (float) β = 1 / (k_B T)
+
+            blocksize: (int) Block size used when computing the variance
+
+        Returns:
+
+            (np.ndarray): PMF from a single window
+        """
+
+        obs_zetas = self._obs_zetas
+        mean_q = self.gaussian_pdf.mean
+        std_q = self.gaussian_pdf.std
+
+        n_blocks = len(obs_zetas) // blocksize
+        block_means = []
+
+        for block_idx in range(n_blocks):
+            start_idx = blocksize * block_idx
+            end_idx = start_idx + blocksize
+
+            block_mean = np.mean(obs_zetas[start_idx:end_idx])
+            block_means.append(block_mean)
+
+        block_std_q = np.std(block_means, ddof=1)
+
+        var_mean_q = (1 / n_blocks) * block_std_q**2
+        var_var_q = (2 / n_blocks) * block_std_q**4
+
+        # [1] Equation 5
+        var_dA_dq = ((1 / (beta**2 * std_q**4))
+                     * (var_mean_q
+                        + ((zetas - mean_q)**2 * var_var_q) / std_q**4))
+
+        return var_dA_dq
 
     @property
     def zeta_ref(self) -> float:
@@ -443,8 +523,8 @@ class UmbrellaSampling:
         return np.min(np.abs(self.zeta_func(traj) - ref)) > 0.5
 
     def run_umbrella_sampling(self,
-                              traj:     'mlptrain.ConfigurationSet',
-                              mlp:      'mlptrain.potentials._base.MLPotential',
+                              traj:    'mlptrain.ConfigurationSet',
+                              mlp:     'mlptrain.potentials._base.MLPotential',
                               temp:        float,
                               interval:    int,
                               dt:          float,
@@ -488,7 +568,7 @@ class UmbrellaSampling:
                              separately as .xyz files
 
             all_to_xyz: (bool) If True all .traj trajectory files are saved as
-                               .xyz files (when using save_fs, save_ps, save_ns)
+                              .xyz files (when using save_fs, save_ps, save_ns)
 
         -------------------
         Keyword Arguments:
@@ -762,7 +842,7 @@ class UmbrellaSampling:
         probability distribution. Such that the the PMF becomes
 
         .. math::
-            dA/dq = Σ_i p_i(q) dA^u_i/ dq
+            dA/dq = Σ_i p_i(q) dA_i/ dq
 
         where the sum runs over the windows. Also plot and save the resulting
         free energy.
@@ -806,7 +886,7 @@ class UmbrellaSampling:
 
         dA_dq = np.zeros_like(zetas)
         for i, window in enumerate(self.windows):
-            dA_dq += window.p_ui * window.dAu_dq(zetas, beta=beta)
+            dA_dq += window.p_ui * window.dA_dq(zetas, beta=beta)
 
         free_energies = np.zeros_like(zetas)
         for i, _ in enumerate(zetas):
@@ -903,31 +983,9 @@ class UmbrellaSampling:
 
         var_dA_dq = 0
         for i, window in enumerate(self.windows):
-
-            obs_zetas = window._obs_zetas
-            mean_q_i = window.gaussian_pdf.mean
-            std_q_i = window.gaussian_pdf.std
-
-            n_blocks = len(obs_zetas) // blocksize
-            block_means = []
-
-            for block_idx in range(n_blocks):
-                start_idx = blocksize * block_idx
-                end_idx = start_idx + blocksize
-
-                block_mean = np.mean(obs_zetas[start_idx:end_idx])
-                block_means.append(block_mean)
-
-            block_std_q_i = np.std(block_means, ddof=1)
-
-            var_mean_q_i = (1 / n_blocks) * block_std_q_i**2
-            var_var_q_i = (2 / n_blocks) * block_std_q_i**4
-
-            # [1] Equation 5
-            var_dAi_dq = ((1 / (self.beta**2 * std_q_i**4))
-                          * (var_mean_q_i + ((zetas - mean_q_i)**2
-                             * var_var_q_i) / std_q_i**4))
-
+            var_dAi_dq = window.var_dA_dq(zetas=zetas,
+                                          beta=self.beta,
+                                          blocksize=blocksize)
             # [1] Equation 9
             var_dA_dq += window.p_ui**2 * var_dAi_dq
 
@@ -1057,7 +1115,6 @@ class UmbrellaSampling:
 
     @staticmethod
     def plot_free_energy(filename:         Optional[str] = None,
-                         error_bar:        Optional[Sequence] = None,
                          confidence_level: float = 0.95) -> None:
         """
         Plot the free energy against the reaction coordinate
@@ -1068,12 +1125,9 @@ class UmbrellaSampling:
             filename: (str) Name of the file containing reaction coordinate
                             values, free energies, and uncertainties
 
-            error_bar: (Sequence) Reaction coordinate values at which to
-                                  attach error bars
-
             confidence_level: (float) Specifies what confidence level to use
                                       in plots (probability for free energy
-                                      to lie within the error bar)
+                                      to lie within the plotted range)
         """
 
         if filename is None:
@@ -1099,6 +1153,22 @@ class UmbrellaSampling:
 
         fig, ax = plt.subplots()
         ax.plot(zetas, rel_free_energies, color='k')
+
+        if uncertainty_present:
+            uncertainties = np.loadtxt(filename, usecols=2)
+
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                conf_interval = norm.interval(confidence_level,
+                                              loc=rel_free_energies,
+                                              scale=uncertainties)
+
+            lower_bound = conf_interval[0]
+            upper_bound = conf_interval[1]
+
+            ax.fill_between(zetas, lower_bound, upper_bound,
+                            alpha=0.3,
+                            label='Confidence interval')
 
         if error_bar is not None:
 
