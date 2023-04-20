@@ -903,16 +903,16 @@ class UmbrellaSampling:
 
         # TODO: remove
         min_n_blocks = 10
-        min_blocksize = 10
+        min_blocksize = 1
         blocksize_interval = 5
         max_blocksize = len(self.windows[0]._obs_zetas) // min_n_blocks
         blocksizes = range(min_blocksize, max_blocksize + 1, blocksize_interval)
 
-        var_dA_dq = 0
         # TODO: remove
         var_A_list = []
 
         for blocksize in blocksizes:
+            var_dA_dq = 0
             logger.info(f'BLOCKSIZE: {blocksize}')
             for i, window in enumerate(self.windows):
                 obs_zetas = window._obs_zetas
