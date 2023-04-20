@@ -902,7 +902,7 @@ class UmbrellaSampling:
         #     return None
 
         # TODO: remove
-        min_n_blocks = 10
+        min_n_blocks = 5
         min_blocksize = 1
         blocksize_interval = 5
         max_blocksize = len(self.windows[0]._obs_zetas) // min_n_blocks
