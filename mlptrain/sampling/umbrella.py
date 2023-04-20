@@ -1001,9 +1001,10 @@ class UmbrellaSampling:
 
         # TODO: remove
         var_A_list = np.array(var_A_list)
+        np.save('var_A.npy', var_A_list)
         blocksizes = np.array(list(blocksizes)).reshape((len(blocksizes), 1))
-        data = np.concatenate(var_A_list, blocksizes, axis=1)
-        np.save('var_A_blocksizes.npy', data)
+        data = np.concatenate((var_A_list, blocksizes), axis=1)
+        np.save('var_A_with_blocksizes.npy', data)
 
         return None
 
