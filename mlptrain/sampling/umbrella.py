@@ -1152,7 +1152,7 @@ class UmbrellaSampling:
         rel_free_energies = np.loadtxt(filename, usecols=1)
 
         fig, ax = plt.subplots()
-        ax.plot(zetas, rel_free_energies, color='k')
+        ax.plot(zetas, rel_free_energies, label='Free energy')
 
         if uncertainty_present:
             uncertainties = np.loadtxt(filename, usecols=2)
@@ -1170,6 +1170,7 @@ class UmbrellaSampling:
                             alpha=0.3,
                             label='Confidence interval')
 
+        ax.legend()
         ax.set_xlabel('Reaction coordinate / Å')
         ax.set_ylabel(f'ΔG / {convert_exponents(units)}')
 
