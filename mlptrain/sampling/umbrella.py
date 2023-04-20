@@ -889,102 +889,123 @@ class UmbrellaSampling:
                           as zetas
         """
 
-        blocksize = kwargs.get('blocksize', 1000)
-        min_n_blocks = 10
-        n_obs_zetas = min(len(window._obs_zetas) for window in self.windows)
-        max_blocksize = n_obs_zetas // min_n_blocks
-        if blocksize > max_blocksize:
-            logger.warning('Simulation is too short to get a good estimate '
-                           'of the UI uncertainties. Either run a longer US '
-                           'simulation, or change the default block size '
-                           '(making sure the blocks are not correlated)')
-
-            return None
-
-        var_dA_dq = 0
-
-        for i, window in enumerate(self.windows):
-            obs_zetas = window._obs_zetas
-            mean_q_i = window.gaussian_pdf.mean
-            std_q_i = window.gaussian_pdf.std
-
-            # TODO: remove
-            logger.info(f'mean_q_{i} (fitted): {mean_q_i}')
-            logger.info(f'mean_q_{i} (sampled): {np.mean(obs_zetas)}')
-            logger.info(f'std_q_{i} (fitted): {std_q_i}')
-            logger.info(f'std_q_{i} (sampled): {np.std(obs_zetas, ddof=1)}')
-
-            n_blocks = len(obs_zetas) // blocksize
-            block_means = []
-
-            for block_idx in range(n_blocks):
-                start_idx = blocksize * block_idx
-                end_idx = start_idx + blocksize
-
-                block_mean = np.mean(obs_zetas[start_idx:end_idx])
-                block_means.append(block_mean)
-
-            # block_hist, _ = np.histogram(block_means, bins=window.bin_edges)
-            # block_gaussian = _FittedGaussian()
-            #
-            # try:
-            #     block_gaussian.params, _ = curve_fit(block_gaussian.value,
-            #                                          window.bin_centres,
-            #                                          block_hist,
-            #                                          p0=[1.0, 1.0, 1.0],
-            #                                          maxfev=10000)
-            #
-            # except RuntimeError:
-            #     logger.warning('Could not fit gaussian to a block histogram, '
-            #                    'the UI uncertainty estimation is terminated')
-            #     return None
-            #
-            # block_std_q_i = block_gaussian.std
-
-            block_std_q_i = np.std(block_means, ddof=1)
-
-            # TODO: remove
-            logger.info(f'block_std_q_{i} (sampled): {block_std_q_i}')
-
-            var_mean_q_i = (1 / n_blocks) * block_std_q_i**2
-            var_var_q_i = (2 / n_blocks) * block_std_q_i**4
-
-            # [1] Equation 5
-            var_dAi_dq = ((1 / (self.beta**2 * std_q_i**4))
-                          * (var_mean_q_i + ((zetas - mean_q_i)**2
-                             * var_var_q_i) / std_q_i**4))
-
-            # [1] Equation 9
-            var_dA_dq += window.p_ui**2 * var_dAi_dq
+        # blocksize = kwargs.get('blocksize', 1000)
+        # min_n_blocks = 10
+        # n_obs_zetas = min(len(window._obs_zetas) for window in self.windows)
+        # max_blocksize = n_obs_zetas // min_n_blocks
+        # if blocksize > max_blocksize:
+        #     logger.warning('Simulation is too short to get a good estimate '
+        #                    'of the UI uncertainties. Either run a longer US '
+        #                    'simulation, or change the default block size '
+        #                    '(making sure the blocks are not correlated)')
+        #
+        #     return None
 
         # TODO: remove
-        for i, window in enumerate(self.windows):
-            logger.info(f'window {i}: mean {window.gaussian_pdf.mean}, '
-                        f'std {window.gaussian_pdf.std}')
-        logger.info(f'old average_std: {np.mean([w.gaussian_pdf.std for w in self.windows])}')
+        min_n_blocks = 10
+        min_blocksize = 10
+        blocksize_interval = 5
+        max_blocksize = len(self.windows[0]._obs_zetas) // min_n_blocks
+        blocksizes = range(min_blocksize, max_blocksize + 1, blocksize_interval)
 
-        var_A = np.zeros_like(zetas)
-        for i, _ in enumerate(zetas):
+        var_dA_dq = 0
+        # TODO: remove
+        var_A_list = []
 
-            if i == 0:
-                var_A[i] = 0.0
-                continue
+        for blocksize in blocksizes:
+            logger.info(f'BLOCKSIZE: {blocksize}')
+            for i, window in enumerate(self.windows):
+                obs_zetas = window._obs_zetas
+                mean_q_i = window.gaussian_pdf.mean
+                std_q_i = window.gaussian_pdf.std
 
-            lower_edge = zetas[0]
-            upper_edge = zetas[i]
-            average_std = self._compute_average_std_in_interval(lower_edge,
-                                                                upper_edge)
+                # TODO: remove
+                logger.info(f'mean_q_{i} (fitted): {mean_q_i}')
+                logger.info(f'mean_q_{i} (sampled): {np.mean(obs_zetas)}')
+                logger.info(f'std_q_{i} (fitted): {std_q_i}')
+                logger.info(f'std_q_{i} (sampled): {np.std(obs_zetas, ddof=1)}')
+
+                n_blocks = len(obs_zetas) // blocksize
+                block_means = []
+
+                for block_idx in range(n_blocks):
+                    start_idx = blocksize * block_idx
+                    end_idx = start_idx + blocksize
+
+                    block_mean = np.mean(obs_zetas[start_idx:end_idx])
+                    block_means.append(block_mean)
+
+                # block_hist, _ = np.histogram(block_means, bins=window.bin_edges)
+                # block_gaussian = _FittedGaussian()
+                #
+                # try:
+                #     block_gaussian.params, _ = curve_fit(block_gaussian.value,
+                #                                          window.bin_centres,
+                #                                          block_hist,
+                #                                          p0=[1.0, 1.0, 1.0],
+                #                                          maxfev=10000)
+                #
+                # except RuntimeError:
+                #     logger.warning('Could not fit gaussian to a block histogram, '
+                #                    'the UI uncertainty estimation is terminated')
+                #     return None
+                #
+                # block_std_q_i = block_gaussian.std
+
+                block_std_q_i = np.std(block_means, ddof=1)
+                logger.info(f'block_std_q_{i}: {block_std_q_i}')
+
+                # TODO: remove
+                logger.info(f'block_std_q_{i} (sampled): {block_std_q_i}')
+
+                var_mean_q_i = (1 / n_blocks) * block_std_q_i**2
+                var_var_q_i = (2 / n_blocks) * block_std_q_i**4
+                logger.info(f'var_mean_q_{i}: {var_mean_q_i}')
+                logger.info(f'var_var_q_{i}: {var_var_q_i}')
+
+                # [1] Equation 5
+                var_dAi_dq = ((1 / (self.beta**2 * std_q_i**4))
+                              * (var_mean_q_i + ((zetas - mean_q_i)**2
+                                 * var_var_q_i) / std_q_i**4))
+
+                # [1] Equation 9
+                var_dA_dq += window.p_ui**2 * var_dAi_dq
+
             # TODO: remove
-            logger.info(f'average_std: {average_std}')
+            for i, window in enumerate(self.windows):
+                logger.info(f'window {i}: mean {window.gaussian_pdf.mean}, '
+                            f'std {window.gaussian_pdf.std}')
+            logger.info(f'old average_std: {np.mean([w.gaussian_pdf.std for w in self.windows])}')
 
-            # [1] Equation 15
-            var_A[i] = (np.mean(var_dA_dq[:i])
-                        * (np.sqrt(2 * np.pi) * (upper_edge - lower_edge)
-                           * average_std - 2 * average_std**2))
+            var_A = np.zeros_like(zetas)
+            for i, _ in enumerate(zetas):
 
-            logger.info(f'var_A[{i}]: {var_A[i]}')
+                if i == 0:
+                    var_A[i] = 0.0
+                    continue
 
-        return np.sqrt(np.abs(var_A))
+                lower_edge = zetas[0]
+                upper_edge = zetas[i]
+                average_std = self._compute_average_std_in_interval(lower_edge,
+                                                                    upper_edge)
+                # TODO: remove
+                logger.info(f'average_std: {average_std}')
+
+                # [1] Equation 15
+                var_A[i] = (np.mean(var_dA_dq[:i])
+                            * (np.sqrt(2 * np.pi) * (upper_edge - lower_edge)
+                               * average_std - 2 * average_std**2))
+
+                logger.info(f'var_A[{i}]: {var_A[i]}')
+            var_A_list.append(var_A)
+
+        # TODO: remove
+        var_A_list = np.array(var_A_list)
+        blocksizes = np.array(list(blocksizes)).reshape((len(blocksizes), 1))
+        data = np.concatenate(var_A_list, blocksizes, axis=1)
+        np.save('var_A_blocksizes.npy', data)
+
+        return None
 
     def _compute_average_std_in_interval(self,
                                          lower_edge: float,
