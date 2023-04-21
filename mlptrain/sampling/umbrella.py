@@ -903,10 +903,11 @@ class UmbrellaSampling:
 
         # TODO: remove
         min_n_blocks = 5
-        min_blocksize = 1
+        min_blocksize = 5
         blocksize_interval = 5
         max_blocksize = len(self.windows[0]._obs_zetas) // min_n_blocks
-        blocksizes = range(min_blocksize, max_blocksize + 1, blocksize_interval)
+        blocksizes = list(range(min_blocksize, max_blocksize + 1, blocksize_interval))
+        blocksizes.insert(0, 1)
 
         # TODO: remove
         var_A_list = []
@@ -1005,6 +1006,19 @@ class UmbrellaSampling:
         blocksizes = np.array(list(blocksizes)).reshape((len(blocksizes), 1))
         data = np.concatenate((var_A_list, blocksizes), axis=1)
         np.save('var_A_with_blocksizes.npy', data)
+
+        return None
+
+    def truncate_window_trajectories(self,
+                                     removed_fraction: float = 0.20
+                                     ) -> None:
+        """Remove not less then the fraction of the frames from the start of
+        the window trajectories"""
+
+        for window in self.windows:
+            obs_zetas = window._obs_zetas
+            n_removed = int(removed_fraction * len(obs_zetas)) + 1
+            window._obs_zetas = obs_zetas[n_removed:]
 
         return None
 
