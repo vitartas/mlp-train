@@ -342,14 +342,17 @@ def _gen_active_config(config:      'mlptrain.Configuration',
 
         kwargs = _modify_kwargs_for_metad_bias_inheritance(kwargs)
 
-    traj = run_mlp_md(config,
-                      mlp=mlp,
-                      temp=temp if curr_time > 0 else i_temp,
-                      dt=0.5,
-                      interval=max(1, 2*md_time//selector.n_backtrack),
-                      fs=md_time,
-                      n_cores=1,
-                      **kwargs)
+    try:
+        traj = run_mlp_md(config,
+                          mlp=mlp,
+                          temp=temp if curr_time > 0 else i_temp,
+                          dt=0.5,
+                          interval=max(1, 2*md_time//selector.n_backtrack),
+                          fs=md_time,
+                          n_cores=1,
+                          **kwargs)
+    except Exception as err:
+        raise Exception(f'Raised an exception in selection: \n{err}')
 
     traj.t0 = curr_time  # Increment the initial time (t0)
 
