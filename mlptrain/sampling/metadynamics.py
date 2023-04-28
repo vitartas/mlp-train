@@ -53,6 +53,12 @@ class Metadynamics:
         Arguments:
 
             cvs: Sequence of PLUMED collective variables
+
+            bias: PLUMED bias which can be supplied if additional collective
+                  variables are required,
+                  e.g. Metadynamics(cvs=cv1, bias=PlumedBias(cvs=(cv1, cv2)),
+                  where cv1 will be biased using metadynamics, and cv2 might
+                  be an additional CV with WALLS to constrain the system
         """
 
         if bias is not None:
@@ -1009,9 +1015,7 @@ class Metadynamics:
             for line in reweight_setup:
                 f.write(f'{line}\n')
 
-        for cv in self.bias.cvs:
-            if cv.files is not None:
-                cv.write_files()
+        self.bias.write_cv_files()
 
         driver_process = Popen(['plumed', 'driver',
                                 '--ixyz', 'sliced_traj.xyz',
