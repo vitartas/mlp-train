@@ -198,8 +198,9 @@ def train(mlp:                 'mlptrain.potentials._base.MLPotential',
 
         mlp.train()
 
-    if inherit_metad_bias:
-        _remove_last_inherited_metad_bias_file(max_active_iters, bias)
+    # XXX
+    # if inherit_metad_bias:
+    #     _remove_last_inherited_metad_bias_file(max_active_iters, bias)
 
     return None
 
@@ -352,7 +353,7 @@ def _gen_active_config(config:      'mlptrain.Configuration',
                       dt=0.5,
                       interval=max(1, 2*md_time//selector.n_backtrack),
                       fs=md_time,
-                      n_cores=1,
+                      n_cores=6,
                       **kwargs)
 
     traj.t0 = curr_time  # Increment the initial time (t0)
@@ -786,6 +787,9 @@ def _generate_inheritable_metad_bias_hills(n_configs, hills_files, iteration,
 
         os.remove(fname)
 
+    # XXX
+    shutil.copyfile(src=f'HILLS_{iteration}.dat',
+                    dst=f'HILLS_{iteration}_copy.dat')
     return None
 
 
