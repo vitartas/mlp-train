@@ -11,6 +11,7 @@ from typing import Optional, Sequence, Union, Tuple, List
 from multiprocessing import Pool
 from subprocess import Popen
 from copy import deepcopy
+from matplotlib.colors import ListedColormap
 from scipy.stats import norm
 from ase import units as ase_units
 from ase.io import write as ase_write
@@ -290,6 +291,9 @@ class Metadynamics:
 
             {save_fs, save_ps, save_ns}: Trajectory saving interval
                                          in some units
+
+            constraints: (List) List of ASE constraints to use in the dynamics
+                                e.g. [ase.constraints.Hookean(a1, a2, k, rt)]
         """
 
         start_metad = time.perf_counter()
@@ -1276,7 +1280,6 @@ class Metadynamics:
                             * np.std(fes_grids, axis=0, ddof=1))
 
         else:
-            # No benefit from n_fes_grids
             mean_fes = fes_grids[-2]
             std_mean_fes = fes_grids[-1]
 
@@ -1292,18 +1295,27 @@ class Metadynamics:
                                                     ncols=2,
                                                     figsize=(12, 5))
 
-        mean_contourf = ax_mean.contourf(cv1_grid, cv2_grid, mean_fes, 100,
-                                         cmap='jet')
-        ax_mean.contour = (cv1_grid, cv2_grid, mean_fes, 20)
+        jet_cmap = plt.get_cmap('jet')
+        jet_cmap_matrix = jet_cmap(np.linspace(0, 1, 256))
+        jet_cmap_matrix[-1, :] = [1, 1, 1, 1]
+        mod_jet_cmap = ListedColormap(jet_cmap_matrix)
+
+        mean_contourf = ax_mean.contourf(cv1_grid, cv2_grid, mean_fes, 256,
+                                         cmap=mod_jet_cmap)
+        ax_mean.contour(cv1_grid, cv2_grid, mean_fes, 20,
+                        colors='k',
+                        alpha=0.2)
 
         mean_cbar = fig.colorbar(mean_contourf, ax=ax_mean)
         mean_cbar.set_label(label=r'$\Delta G$ / '
                                   f'{convert_exponents(energy_units)}')
 
         std_error_contourf = ax_std_error.contourf(cv1_grid, cv2_grid,
-                                                   interval_range, 100,
+                                                   interval_range, 256,
                                                    cmap='Blues')
-        ax_std_error.contour = (cv1_grid, cv2_grid, interval_range, 20)
+        ax_std_error.contour(cv1_grid, cv2_grid, mean_fes, 20,
+                             colors='k',
+                             alpha=0.2)
 
         std_error_cbar = fig.colorbar(std_error_contourf, ax=ax_std_error)
         std_error_cbar.set_label(label='Confidence interval / '
@@ -1327,7 +1339,7 @@ class Metadynamics:
 
         fig.tight_layout()
 
-        figname = 'metad_free_energy.pdf'
+        figname = 'metad_free_energy.png'
         if os.path.exists(figname):
             os.rename(figname, unique_name(figname))
 
