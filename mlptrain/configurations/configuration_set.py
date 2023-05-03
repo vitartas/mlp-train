@@ -1,6 +1,9 @@
 import os
+import shutil
+import random
 import numpy as np
 from time import time
+from copy import deepcopy
 from multiprocessing import Pool
 from typing import Optional, List, Union
 from autode.atoms import elements, Atom
@@ -265,6 +268,67 @@ class ConfigurationSet(list):
             self.save(filename=f'{name}.npz')
 
         parity_plot(self, name=name)
+        return None
+
+    def cross_validation(self,
+                         k:          int,
+                         mlp:        'mlptrain.potentials._base.MLPotential',
+                         est_method: str
+                         ) -> None:
+        """Perform k-fold cross validation for a given dataset"""
+
+        if any(config.energy.true == None for config in self):
+            raise ValueError('All configurations must have a defined '
+                             'true energy in order to proceed with '
+                             'cross validation')
+
+        mlp.set_atomic_energies(method_name=est_method)
+
+        shuffled_set = random.sample(self, len(self))
+        n_datap = len(shuffled_set)
+
+        if k is None:
+            # Find k which divides the set which is closest to 10
+            divisors = []
+            for i in range(2, n_datap + 1):
+                if n_datap % i == 0:
+                    divisors.append(i)
+
+            divisors = np.array(divisors)
+            k_index = np.argmin(np.abs(divisors - 10))
+            k = divisors[k_index]
+
+        fold_length = int(n_datap / k)
+
+        logger.info(f'Performing k-fold cross validation with k={k} '
+                    f'and fold_length={fold_length}')
+
+        for fold_idx in range(k):
+
+            shuffled_set_copy = ConfigurationSet()
+            for config in shuffled_set:
+                shuffled_set_copy.append(config)
+
+            removable_idxs = []
+            valid_set = ConfigurationSet()
+            for j in range(fold_length):
+                idx = fold_idx*fold_length + j
+                valid_set.append(shuffled_set[idx])
+                removable_idxs.append(idx)
+
+            for idx in reversed(removable_idxs):
+                shuffled_set_copy.pop(idx)
+
+            mlp.train(configurations=shuffled_set_copy)
+
+            mlp.predict(shuffled_set_copy)
+            mlp.predict(valid_set)
+            valid_set.save(f'valid_set_{fold_idx}.npz')
+            shuffled_set_copy.save(f'train_set_{fold_idx}.npz')
+
+            shutil.copyfile(f'{mlp.name}.json', f'{mlp.name}_{fold_idx}.json')
+            os.remove(f'{mlp.name}.json')
+
         return None
 
     def save_xyz(self,
