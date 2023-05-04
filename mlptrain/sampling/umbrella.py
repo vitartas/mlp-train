@@ -1,11 +1,13 @@
 import os
 import re
 import time
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.integrate import simpson
-from typing import Optional, List, Callable, Tuple
+from scipy.stats import norm
+from typing import Optional, Callable, List, Sequence, Tuple
 from multiprocessing import Pool
 from copy import deepcopy
 from ase.io.trajectory import Trajectory as ASETrajectory
@@ -14,9 +16,14 @@ from mlptrain.sampling.bias import Bias
 from mlptrain.sampling.reaction_coord import DummyCoordinate
 from mlptrain.configurations import ConfigurationSet
 from mlptrain.sampling.md import run_mlp_md
-from mlptrain.utils import move_files, convert_ase_energy, convert_exponents
 from mlptrain.config import Config
 from mlptrain.log import logger
+from mlptrain.utils import (
+    move_files,
+    unique_name,
+    convert_ase_energy,
+    convert_exponents
+)
 
 
 class _Window:
@@ -47,6 +54,9 @@ class _Window:
         self.bias_energies: Optional[np.ndarray] = None
         self.hist:          Optional[np.ndarray] = None
 
+        # Weight used in umbrella integration
+        self.p_ui: Optional[float] = None
+
         self.free_energy = 0.0
 
     def bin(self) -> None:
@@ -63,8 +73,21 @@ class _Window:
 
         return None
 
-    def set_bin_edges(self, outer_zeta_refs, n_bins) -> None:
-        """Compute and store an array with zeta values at bin edges"""
+    def set_bin_edges(self,
+                      outer_zeta_refs: Tuple[float, float],
+                      n_bins:          int
+                      ) -> None:
+        """
+        Compute and store an array with zeta values at bin edges
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            outer_zeta_refs: (Tuple) Left-most and right-most reaction
+                                     reaction coordinate values
+
+            n_bins: (int) number of bins to use in the histogram
+        """
 
         lmost_edge, rmost_edge = outer_zeta_refs
         _bin_edges = np.linspace(lmost_edge, rmost_edge, num=n_bins+1)
@@ -111,8 +134,24 @@ class _Window:
 
         return int(np.sum(self.hist))
 
-    def dAu_dq(self, zetas, beta):
-        """PMF from a single window"""
+    def dA_dq(self,
+              zetas: np.ndarray,
+              beta:  float
+              ) -> np.ndarray:
+        """
+        PMF from a single window
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            zetas: (np.ndarray) Discretised reaction coordinate
+
+            beta: (float) β = 1 / (k_B T)
+
+        Returns:
+
+            (np.ndarray): PMF from a single window
+        """
 
         if self.gaussian_pdf is None:
             raise TypeError('Cannot estimate PMF if the window does not '
@@ -124,10 +163,61 @@ class _Window:
         zeta_ref = self.zeta_ref
 
         # Equation 8.8.21 from Tuckerman, p. 344
-        _dAu_dq = ((1.0 / beta) * (zetas - mean_zeta_b) / (std_zeta_b**2)
-                   - kappa * (zetas - zeta_ref))
+        _dA_dq = ((1.0 / beta) * (zetas - mean_zeta_b) / (std_zeta_b**2)
+                  - kappa * (zetas - zeta_ref))
 
-        return _dAu_dq
+        return _dA_dq
+
+    def var_dA_dq(self,
+                  zetas:     np.ndarray,
+                  beta:      float,
+                  blocksize: int
+                  ) -> np.ndarray:
+        """
+        Variance of PMF from a single window [1]
+
+        [1] Kastner, J., & Thiel, W. (2006). Journal of Chemical Physics,
+            124(23), 234106. https://doi.org/10.1063/1.2206775
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            zetas: (np.ndarray) Discretised reaction coordinate
+
+            beta: (float) β = 1 / (k_B T)
+
+            blocksize: (int) Block size used when computing the variance
+
+        Returns:
+
+            (np.ndarray): PMF from a single window
+        """
+
+        obs_zetas = self._obs_zetas
+        mean_q = self.gaussian_pdf.mean
+        std_q = self.gaussian_pdf.std
+
+        n_blocks = len(obs_zetas) // blocksize
+        block_means = []
+
+        for block_idx in range(n_blocks):
+            start_idx = blocksize * block_idx
+            end_idx = start_idx + blocksize
+
+            block_mean = np.mean(obs_zetas[start_idx:end_idx])
+            block_means.append(block_mean)
+
+        block_std_q = np.std(block_means, ddof=1)
+
+        var_mean_q = (1 / n_blocks) * block_std_q**2
+        var_var_q = (2 / n_blocks) * block_std_q**4
+
+        # [1] Equation 5
+        var_dA_dq = ((1 / (beta**2 * std_q**4))
+                     * (var_mean_q
+                        + ((zetas - mean_q)**2 * var_var_q) / std_q**4))
+
+        return var_dA_dq
 
     @property
     def zeta_ref(self) -> float:
@@ -139,6 +229,89 @@ class _Window:
             (float):
         """
         return self._bias.ref
+
+    def block_analysis(self, label: Optional[str] = None) -> None:
+        """
+        Split the trajectory into blocks and compute the standard error of the
+        mean zeta value over the blocks. Repeat for different block sizes and
+        plot the results
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            label: (str) String distinguishing a particular window, useful if
+                         block analysis is performed to all windows at once
+        """
+
+        logger.info('Performing block analysis'
+                    f'{f" for window {label}" if label is not None else ""}')
+
+        min_n_blocks = 10
+        min_blocksize = 10
+        blocksize_interval = 5
+        max_blocksize = len(self._obs_zetas) // min_n_blocks
+
+        if max_blocksize < min_blocksize:
+            raise ValueError('The simulation is too short to perform '
+                             'block analysis')
+
+        blocksizes = list(range(min_blocksize, max_blocksize + 1,
+                                blocksize_interval))
+
+        # Insert blocksize of 1
+        blocksizes.insert(0, 1)
+
+        std_errs = []
+        for blocksize in blocksizes:
+            n_blocks = len(self._obs_zetas) // blocksize
+            block_means = []
+
+            for block_idx in range(n_blocks):
+                start_idx = blocksize * block_idx
+                end_idx = blocksize * (block_idx + 1)
+                block_mean = np.mean(self._obs_zetas[start_idx:end_idx])
+                block_means.append(block_mean)
+
+            std_err = (1 / n_blocks) * np.std(block_means, ddof=1)
+            std_errs.append(std_err)
+
+        self._plot_block_analysis(blocksizes=blocksizes,
+                                  std_errs=std_errs,
+                                  label=label)
+        return None
+
+    @staticmethod
+    def _plot_block_analysis(blocksizes: List,
+                             std_errs:   List,
+                             label:      Optional[str] = None) -> None:
+        """
+        Plot block averaging analysis of the window
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            label: (str) String distinguishing a particular window, useful if
+                         block analysis is performed to all windows at once
+        """
+
+        fig, ax = plt.subplots()
+        ax.plot(blocksizes, std_errs, color='k')
+
+        ax.set_xlabel('Block size')
+        ax.set_ylabel(r'$\sigma_{\mu_{\zeta}}$ / Å')
+
+        fig.tight_layout()
+
+        if label is None:
+            figname = 'block_analysis_window.pdf'
+
+        else:
+            figname = f'block_analysis_window_{label}.pdf'
+
+        fig.savefig(figname)
+        plt.close(fig)
+
+        return None
 
     @classmethod
     def from_file(cls, filename: str) -> '_Window':
@@ -350,8 +523,8 @@ class UmbrellaSampling:
         return np.min(np.abs(self.zeta_func(traj) - ref)) > 0.5
 
     def run_umbrella_sampling(self,
-                              traj:     'mlptrain.ConfigurationSet',
-                              mlp:      'mlptrain.potentials._base.MLPotential',
+                              traj:    'mlptrain.ConfigurationSet',
+                              mlp:     'mlptrain.potentials._base.MLPotential',
                               temp:        float,
                               interval:    int,
                               dt:          float,
@@ -395,7 +568,7 @@ class UmbrellaSampling:
                              separately as .xyz files
 
             all_to_xyz: (bool) If True all .traj trajectory files are saved as
-                               .xyz files (when using save_fs, save_ps, save_ns)
+                              .xyz files (when using save_fs, save_ps, save_ns)
 
         -------------------
         Keyword Arguments:
@@ -574,10 +747,12 @@ class UmbrellaSampling:
         return 1.0 / (k_b * self.temp)
 
     def wham(self,
-             tol:            float = 1E-3,
-             max_iterations: int = 100000,
-             n_bins:         int = 100
-             ) -> Tuple[np.ndarray, np.ndarray]:
+             tol:                 float = 1E-3,
+             max_iterations:      int = 100000,
+             n_bins:              int = 100,
+             units:               str = 'kcal mol-1',
+             compute_uncertainty: bool = False,
+             **kwargs) -> Tuple[np.ndarray, np.ndarray]:
         """
         Construct an unbiased distribution (on a grid) from a set of windows
 
@@ -591,6 +766,18 @@ class UmbrellaSampling:
             n_bins: Number of bins to use in the histogram (minus one) and
                     the number of reaction coordinate values plotted and
                     returned
+
+            units: (str) Energy units, available: eV, kcal mol-1, kj mol-1
+
+            compute_uncertainty: (bool) If True compute free energy uncertainty
+                                        using umbrella integration error
+                                        propagation
+
+        ---------------
+        Keyword Arguments:
+
+            blocksize: (int) Block size to use in uncertainty quantification.
+                             If not supplied, a value of 1000 is used
 
         Returns:
             (np.ndarray, np.ndarray): Tuple containing the reaction coordinate
@@ -630,19 +817,32 @@ class UmbrellaSampling:
 
             p_prev = p
 
-        _plot_and_save_free_energy(free_energies=self.free_energies(p),
-                                   zetas=zetas)
+        if compute_uncertainty:
+            self._attach_p_ui_values_to_windows(zetas=zetas)
+            uncertainties = self._compute_ui_uncertainty(zetas=zetas, **kwargs)
+
+        else:
+            uncertainties = None
+
+        self._save_free_energy(free_energies=self.free_energies(p),
+                               zetas=zetas,
+                               uncertainties=uncertainties,
+                               units=units)
+        self.plot_free_energy()
+
         return zetas, self.free_energies(p)
 
     def umbrella_integration(self,
-                             n_bins: int = 100
-                             ) -> Tuple[np.ndarray, np.ndarray]:
+                             n_bins:              int = 100,
+                             units:               str = 'kcal mol-1',
+                             compute_uncertainty: bool = False,
+                             **kwargs) -> Tuple[np.ndarray, np.ndarray]:
         """
         Perform umbrella integration on the umbrella windows to un-bias the
         probability distribution. Such that the the PMF becomes
 
         .. math::
-            dA/dq = Σ_i p_i(q) dA^u_i/ dq
+            dA/dq = Σ_i p_i(q) dA_i/ dq
 
         where the sum runs over the windows. Also plot and save the resulting
         free energy.
@@ -653,6 +853,18 @@ class UmbrellaSampling:
             n_bins: Number of bins to use in the histogram (minus one) and
                     the number of reaction coordinate values plotted and
                     returned
+
+            units: (str) Energy units, available: eV, kcal mol-1, kj mol-1
+
+            compute_uncertainty: (bool) If True compute free energy uncertainty
+                                        using umbrella integration error
+                                        propagation
+
+        ---------------
+        Keyword Arguments:
+
+            blocksize: (int) Block size to use in uncertainty quantification.
+                             If not supplied, a value of 1000 is used
 
         Returns:
 
@@ -670,30 +882,308 @@ class UmbrellaSampling:
         zetas = np.linspace(self.zeta_refs[0], self.zeta_refs[-1], num=n_bins)
         zetas_spacing = zetas[1] - zetas[0]
 
+        self._attach_p_ui_values_to_windows(zetas=zetas)
+
         dA_dq = np.zeros_like(zetas)
-        free_energies = np.zeros_like(zetas)
-        sum_a = 0
-
         for i, window in enumerate(self.windows):
-            a_i = window.n * window.gaussian_pdf(zetas)
-            dA_dq += a_i * window.dAu_dq(zetas, beta=beta)
-            sum_a += a_i
+            dA_dq += window.p_ui * window.dA_dq(zetas, beta=beta)
 
-        # Normalise
-        dA_dq /= sum_a
-
+        free_energies = np.zeros_like(zetas)
         for i, _ in enumerate(zetas):
             if i == 0:
                 free_energies[i] = 0.0
+                continue
+
+            free_energies[i] = simpson(dA_dq[:i],
+                                       zetas[:i],
+                                       dx=zetas_spacing)
+
+        if compute_uncertainty:
+            uncertainties = self._compute_ui_uncertainty(zetas=zetas, **kwargs)
+
+        else:
+            uncertainties = None
+
+        self._save_free_energy(free_energies=free_energies,
+                               zetas=zetas,
+                               uncertainties=uncertainties,
+                               units=units)
+        self.plot_free_energy()
+
+        return zetas, free_energies
+
+    def _attach_p_ui_values_to_windows(self, zetas: np.ndarray) -> None:
+        """
+        Compute p_ui values for every window, (not to be confused with
+        p values that appear in WHAM), which are used in umbrella integration
+        and uncertainty quantification, and attach those values to the
+        corresponding windows
+
+        ----------------------------------------------------------------------
+        Arguments:
+
+            zetas: (np.ndarray) Discretised reaction coordinate
+        """
+
+        a_list = []
+        for i, window in enumerate(self.windows):
+            a_i = window.n * window.gaussian_pdf(zetas)
+            a_list.append(a_i)
+
+        sum_a = sum(a_list)
+        p_ui_list = [a_i / sum_a for a_i in a_list]
+
+        for i, (window, p_ui_i) in enumerate(zip(self.windows, p_ui_list)):
+            window.p_ui = p_ui_i
+
+        return None
+
+    def _compute_ui_uncertainty(self,
+                                zetas: np.ndarray,
+                                **kwargs) -> Optional[np.ndarray]:
+        """
+        Compute free energy standard deviation using umbrella integration
+        error propagation. It should mainly be used when windows are combined
+        using umbrella integration, but in many cases the UI standard deviation
+        is a good estimate for WHAM free energy too (care must be taken as the
+        UI standard deviation cannot account for the growth of WHAM free energy
+        statistical error when a large number of bins is used)[1]
+
+        [1] Kastner, J., & Thiel, W. (2006). Journal of Chemical Physics,
+            124(23), 234106. https://doi.org/10.1063/1.2206775
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            zetas: (np.ndarray) Discretised reaction coordinate
+
+        ---------------
+        Keyword Arguments:
+
+            blocksize: (int) Block size to use in uncertainty quantification.
+                             If not supplied, a value of 1000 is used
+
+        Returns:
+
+            (np.ndarray): Free energy standard deviation with the same shape
+                          as zetas
+        """
+
+        blocksize = kwargs.get('blocksize', 1000)
+        min_n_blocks = 10
+        n_obs_zetas = min(len(window._obs_zetas) for window in self.windows)
+        max_blocksize = n_obs_zetas // min_n_blocks
+        if blocksize > max_blocksize:
+            logger.warning('Simulation is too short to get a good estimate '
+                           'of the UI uncertainties. Either run a longer US '
+                           'simulation, or change the default block size '
+                           '(making sure the blocks are not correlated)')
+
+            return None
+
+        var_dA_dq = 0
+        for i, window in enumerate(self.windows):
+            var_dAi_dq = window.var_dA_dq(zetas=zetas,
+                                          beta=self.beta,
+                                          blocksize=blocksize)
+            # [1] Equation 9
+            var_dA_dq += window.p_ui**2 * var_dAi_dq
+
+        var_A = np.zeros_like(zetas)
+        for i, _ in enumerate(zetas):
+
+            if i == 0:
+                var_A[i] = 0.0
+                continue
+
+            lower_edge = zetas[0]
+            upper_edge = zetas[i]
+            average_std = self._compute_average_std_in_interval(lower_edge,
+                                                                upper_edge)
+            # [1] Equation 15
+            var_A[i] = (np.mean(var_dA_dq[:i])
+                        * (np.sqrt(2 * np.pi) * (upper_edge - lower_edge)
+                           * average_std - 2 * average_std**2))
+
+        return np.sqrt(np.abs(var_A))
+
+    def _compute_average_std_in_interval(self,
+                                         lower_edge: float,
+                                         upper_edge: float
+                                         ) -> float:
+        """
+        Compute average of standard deviations over the windows contributing
+        to the interval, used in [1] Equation 15
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            lower_edge: (float) Lowest value of the reaction coordinate, which
+                                is the lower edge of the interval
+
+            upper_edge: (float) Value of the reaction coordinate at which the
+                                free energy is calculated, it is the upper edge
+                                of the interval
+        """
+
+        integrals = np.zeros(len(self.windows))
+        for i, window in enumerate(self.windows):
+            distr = norm(loc=window.gaussian_pdf.mean,
+                         scale=window.gaussian_pdf.std)
+            integral = distr.cdf(upper_edge) - distr.cdf(lower_edge)
+            integrals[i] = integral
+
+        normalised_integrals = integrals / np.sum(integrals)
+
+        average_std = 0
+        for window, integral in zip(self.windows, normalised_integrals):
+            average_std += integral * window.gaussian_pdf.std
+
+        return average_std
+
+    def window_block_analysis(self) -> None:
+        """
+        Perform block averaging analysis on the trajectories of each window and
+        plot the results
+        """
+
+        with Pool(processes=Config.n_cores) as pool:
+
+            for i, window in enumerate(self.windows, start=1):
+                pool.apply_async(func=window.block_analysis, args=(i,))
+
+            pool.close()
+            pool.join()
+
+        move_files(moved_substrings=[r'block_analysis_window_\d+\.pdf'],
+                   dst_folder='window_block_analysis',
+                   regex=True)
+
+        return None
+
+    @staticmethod
+    def _save_free_energy(free_energies: np.ndarray,
+                          zetas:         np.ndarray,
+                          uncertainties: Optional[np.ndarray] = None,
+                          units:         str = 'kcal mol-1'
+                          ) -> None:
+        """
+        Save the free energy (and uncertainty) as a .txt file
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            free_energies: (np.ndarray) Free energy values at every value of
+                                        the reaction coordinate
+
+            zetas: (np.ndarray) Values of the reaction coordinate
+
+            uncertainties: (np.ndarray) Standard deviation of the free energy
+                                    at every value of the reaction coordinate
+
+            units: (str) Energy units, available: eV, kcal mol-1, kj mol-1
+        """
+
+        free_energies = convert_ase_energy(free_energies, units)
+        rel_free_energies = free_energies - min(free_energies)
+
+        filename = 'umbrella_free_energy.txt'
+        if os.path.exists(filename):
+            os.rename(filename, unique_name(filename))
+
+        with open(filename, 'w') as outfile:
+            print(f'# Units: {units.lower()}', file=outfile)
+
+            if uncertainties is None:
+                print('# Reaction_coordinate Free_energy',
+                      file=outfile)
+
+                data = zip(zetas, rel_free_energies)
+                for zeta, free_energy in data:
+                    print(zeta, free_energy, file=outfile)
 
             else:
-                free_energies[i] = simpson(dA_dq[:i],
-                                           zetas[:i],
-                                           dx=zetas_spacing)
+                print('# Reaction_coordinate Free_energy Uncertainty',
+                      file=outfile)
 
-        _plot_and_save_free_energy(free_energies=free_energies,
-                                   zetas=zetas)
-        return zetas, free_energies
+                uncertainties = convert_ase_energy(uncertainties, units)
+                data = zip(zetas, rel_free_energies, uncertainties)
+                for zeta, free_energy, uncertainty in data:
+                    print(zeta, free_energy, uncertainty, file=outfile)
+
+        return None
+
+    @staticmethod
+    def plot_free_energy(filename:         Optional[str] = None,
+                         confidence_level: float = 0.95) -> None:
+        """
+        Plot the free energy against the reaction coordinate
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            filename: (str) Name of the file containing reaction coordinate
+                            values, free energies, and uncertainties
+
+            confidence_level: (float) Specifies what confidence level to use
+                                      in plots (probability for free energy
+                                      to lie within the plotted range)
+        """
+
+        if filename is None:
+            filename = 'umbrella_free_energy.txt'
+            if not os.path.exists(filename):
+                raise ValueError('File for plotting the free energy cannot be '
+                                 'found, make sure to compute the free energy '
+                                 'before running this method')
+
+        logger.info(f'Plotting US free energy using {filename}')
+
+        with open(filename, 'r') as f:
+            # '# Units ...'
+            first_line = f.readline()
+            units = ' '.join(first_line.split()[2:])
+
+            # '# Reaction_coordinate Free_energy Uncertainty'
+            second_line = f.readline()
+            uncertainty_present = second_line.split()[-1] == 'Uncertainty'
+
+        zetas = np.loadtxt(filename, usecols=0)
+        rel_free_energies = np.loadtxt(filename, usecols=1)
+
+        fig, ax = plt.subplots()
+        ax.plot(zetas, rel_free_energies, label='Free energy')
+
+        if uncertainty_present:
+            uncertainties = np.loadtxt(filename, usecols=2)
+
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                conf_interval = norm.interval(confidence_level,
+                                              loc=rel_free_energies,
+                                              scale=uncertainties)
+
+            lower_bound = conf_interval[0]
+            upper_bound = conf_interval[1]
+
+            ax.fill_between(zetas, lower_bound, upper_bound,
+                            alpha=0.3,
+                            label='Confidence interval')
+
+        ax.legend()
+        ax.set_xlabel('Reaction coordinate / Å')
+        ax.set_ylabel(f'ΔG / {convert_exponents(units)}')
+
+        fig.tight_layout()
+
+        figname = 'umbrella_free_energy.pdf'
+        if os.path.exists(figname):
+            os.rename(figname, unique_name(figname))
+
+        fig.savefig(figname)
+        plt.close(fig)
+
+        return None
 
     def save(self, folder_name: str = 'umbrella') -> None:
         """
@@ -809,37 +1299,4 @@ class _FittedGaussian:
     @property
     def std(self) -> float:
         """Standard deviation of the Normal distribution"""
-        return self.params[2]
-
-
-def _plot_and_save_free_energy(free_energies,
-                               zetas,
-                               units='kcal mol-1') -> None:
-    """
-    Plots the free energy against the reaction coordinate and saves
-    the corresponding values as a .txt file
-
-    -----------------------------------------------------------------------
-    Arguments:
-
-        zetas: Values of the reaction coordinate
-    """
-
-    free_energies = convert_ase_energy(free_energies, units)
-
-    rel_free_energies = free_energies - min(free_energies)
-
-    fig, ax = plt.subplots()
-    ax.plot(zetas, rel_free_energies, color='k')
-
-    with open(f'umbrella_free_energy.txt', 'w') as outfile:
-        for zeta, free_energy in zip(zetas, rel_free_energies):
-            print(zeta, free_energy, file=outfile)
-
-    ax.set_xlabel('Reaction coordinate / Å')
-    ax.set_ylabel(f'ΔG / {convert_exponents(units)}')
-
-    fig.tight_layout()
-    fig.savefig('umbrella_free_energy.pdf')
-    plt.close(fig)
-    return None
+        return np.abs(self.params[2])

@@ -1043,7 +1043,7 @@ class Metadynamics:
         fig, ax = plt.subplots()
         ax.plot(blocksizes, mean_stds, color='k')
 
-        ax.set_xlabel('Block Size')
+        ax.set_xlabel('Block size')
         ax.set_ylabel(r'$\left\langle\sigma_{\mu_{G}}\right\rangle$ / '
                       f'{convert_exponents(energy_units)}')
 
@@ -1208,12 +1208,12 @@ class Metadynamics:
 
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            confidence_interval = norm.interval(confidence_level,
-                                                loc=mean_fes,
-                                                scale=std_mean_fes)
+            conf_interval = norm.interval(confidence_level,
+                                          loc=mean_fes,
+                                          scale=std_mean_fes)
 
-        lower_bound = confidence_interval[0]
-        upper_bound = confidence_interval[1]
+        lower_bound = conf_interval[0]
+        upper_bound = conf_interval[1]
 
         fig, ax = plt.subplots()
 
@@ -1278,11 +1278,11 @@ class Metadynamics:
 
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            confidence_interval = norm.interval(confidence_level,
-                                                loc=mean_fes,
-                                                scale=std_mean_fes)
+            conf_interval = norm.interval(confidence_level,
+                                          loc=mean_fes,
+                                          scale=std_mean_fes)
 
-        interval_range = confidence_interval[1] - confidence_interval[0]
+        interval_range = conf_interval[1] - conf_interval[0]
 
         fig, (ax_mean, ax_std_error) = plt.subplots(nrows=1,
                                                     ncols=2,
