@@ -355,7 +355,7 @@ def _gen_active_config(config:      'mlptrain.Configuration',
                       dt=0.5,
                       interval=max(1, 2*md_time//selector.n_backtrack),
                       fs=md_time,
-                      n_cores=6,
+                      n_cores=1,
                       **kwargs)
 
     traj.t0 = curr_time  # Increment the initial time (t0)
