@@ -1439,6 +1439,11 @@ class Metadynamics:
         fes_diff_grids = np.diff(fes_grids, axis=0)
         rms_diffs = [np.sqrt(np.mean(grid * grid)) for grid in fes_diff_grids]
 
+        with open('surface_difference.txt', 'w') as f:
+            f.write('# FEStime RMSdiff\n')
+            for FEStime, RMSdiff in zip(fes_time[:-1], rms_diffs):
+                f.write(f'{FEStime} {RMSdiff}\n')
+
         fig, ax = plt.subplots()
         ax.plot(fes_time[:-1], rms_diffs)
 
@@ -1470,6 +1475,12 @@ class Metadynamics:
         for i in range(len(fes_grids) - n_surfaces, len(fes_grids)):
             ax.plot(cv_grids[0], fes_grids[i],
                     label=f'{fes_time[i]} {time_units}')
+
+            with open(f'fes_surface_{i}.txt', 'w') as f:
+                f.write(f'# Time: {fes_time[i]} {time_units}\n')
+                f.write('# CVvalue FESvalue\n')
+                for CVvalue, FESvalue in zip(cv_grids[0], fes_grids[i]):
+                    f.write(f'{CVvalue} {FESvalue}\n')
 
         ax.legend()
 
