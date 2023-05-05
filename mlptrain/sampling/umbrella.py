@@ -272,7 +272,7 @@ class _Window:
                 block_mean = np.mean(self._obs_zetas[start_idx:end_idx])
                 block_means.append(block_mean)
 
-            std_err = (1 / n_blocks) * np.std(block_means, ddof=1)
+            std_err = (1 / np.sqrt(n_blocks)) * np.std(block_means, ddof=1)
             std_errs.append(std_err)
 
         self._plot_block_analysis(blocksizes=blocksizes,
