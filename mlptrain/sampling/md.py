@@ -1,5 +1,7 @@
 import os
 import shutil
+import time
+
 import numpy as np
 import autode as ade
 from copy import deepcopy
@@ -32,10 +34,12 @@ def run_mlp_opt(configuration: 'mlptrain.Configuration',
                 ) -> 'mlptrain.Trajectory':
     """Run TS optimisation using Dimer method"""
 
+    start = time.perf_counter()
+
     n_cores = (kwargs['n_cores'] if 'n_cores' in kwargs
                else min(Config.n_cores, 8))
     os.environ['OMP_NUM_THREADS'] = str(n_cores)
-    logger.info(f'Using {n_cores} core(s) for MLP MD')
+    logger.info(f'Using {n_cores} core(s) for MLP OPT')
 
     if mlp.requires_non_zero_box_size and configuration.box is None:
         logger.warning('Assuming vaccum simulation. Box size = 1000 nm^3')
@@ -64,6 +68,9 @@ def run_mlp_opt(configuration: 'mlptrain.Configuration',
     for i, (frame, energy) in enumerate(zip(traj, energies)):
         frame.update_attr_from(configuration)
         frame.energy.predicted = energy
+
+    end = time.perf_counter()
+    logger.info(f'MLP OPT done in {(end - start) / 60:.1f} m')
 
     return traj
 
