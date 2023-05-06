@@ -20,7 +20,7 @@ from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.io.trajectory import Trajectory as ASETrajectory
 from ase.md.langevin import Langevin
 from ase.md.verlet import VelocityVerlet
-from ase.dimer import MinModeTranslate
+from ase.dimer import MinModeTranslate, DimerControl, MinModeAtoms
 from ase.io import read
 from ase import units as ase_units
 
@@ -48,6 +48,8 @@ def run_mlp_opt(configuration: 'mlptrain.Configuration',
 
     ase_atoms.calc = mlp.ase_calculator
 
+    d_control = DimerControl()
+    ase_atoms = MinModeAtoms(ase_atoms, d_control)
     dyn = MinModeTranslate(ase_atoms)
 
     def append_unbiased_energy():
