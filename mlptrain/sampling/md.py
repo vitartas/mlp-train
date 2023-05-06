@@ -25,11 +25,11 @@ from ase.io import read
 from ase import units as ase_units
 
 
-def run_optimization(configuration: 'mlptrain.Configuration',
-                     mlp:           'mlptrain.potentials._base.MLPotential',
-                     interval:      int = 1,
-                     **kwargs
-                     ) -> 'mlptrain.Trajectory':
+def run_mlp_opt(configuration: 'mlptrain.Configuration',
+                mlp:           'mlptrain.potentials._base.MLPotential',
+                interval:      int = 1,
+                **kwargs
+                ) -> 'mlptrain.Trajectory':
     """Run TS optimisation using Dimer method"""
 
     n_cores = (kwargs['n_cores'] if 'n_cores' in kwargs
