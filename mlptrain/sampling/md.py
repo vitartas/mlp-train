@@ -20,8 +20,50 @@ from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.io.trajectory import Trajectory as ASETrajectory
 from ase.md.langevin import Langevin
 from ase.md.verlet import VelocityVerlet
+from ase.dimer import MinModeTranslate
 from ase.io import read
 from ase import units as ase_units
+
+
+def run_optimization(configuration: 'mlptrain.Configuration',
+                     mlp:           'mlptrain.potentials._base.MLPotential',
+                     interval:      int = 1,
+                     **kwargs
+                     ) -> 'mlptrain.Trajectory':
+    """Run TS optimisation using Dimer method"""
+
+    n_cores = (kwargs['n_cores'] if 'n_cores' in kwargs
+               else min(Config.n_cores, 8))
+    os.environ['OMP_NUM_THREADS'] = str(n_cores)
+    logger.info(f'Using {n_cores} core(s) for MLP MD')
+
+    if mlp.requires_non_zero_box_size and configuration.box is None:
+        logger.warning('Assuming vaccum simulation. Box size = 1000 nm^3')
+        configuration.box = Box([100, 100, 100])
+
+    ase_atoms = configuration.ase_atoms
+    traj_name = 'opt.traj'
+    ase_traj = ASETrajectory(traj_name, 'w', ase_atoms)
+    energies = []
+
+    ase_atoms.calc = mlp.ase_calculator
+
+    dyn = MinModeTranslate(ase_atoms)
+
+    def append_unbiased_energy():
+        energies.append(ase_atoms.calc.get_potential_energy(ase_atoms))
+
+    dyn.attach(append_unbiased_energy, interval=interval)
+    dyn.attach(ase_traj.write, interval=interval)
+    dyn.run()
+
+    traj = _convert_ase_traj(traj_name=traj_name, bias=None, **kwargs)
+
+    for i, (frame, energy) in enumerate(zip(traj, energies)):
+        frame.update_attr_from(configuration)
+        frame.energy.predicted = energy
+
+    return traj
 
 
 def run_mlp_md(configuration:      'mlptrain.Configuration',
