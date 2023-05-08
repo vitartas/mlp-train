@@ -62,10 +62,19 @@ def test_run_umbrella():
         assert os.path.exists(f'trajectories/trajectory_{idx}.traj')
 
         for sim_time in [300, 600, 900]:
-            assert os.path.exists(f'trajectories/trajectory_{idx}_{sim_time}fs.traj')
-            assert os.path.exists(f'trajectories/window_{idx}_{sim_time}fs.xyz')
+            assert os.path.exists(f'trajectories/'
+                                  f'trajectory_{idx}_{sim_time}fs.traj')
+            assert os.path.exists(f'trajectories/'
+                                  f'window_{idx}_{sim_time}fs.xyz')
 
     assert os.path.exists('fitted_data.pdf')
+
+    umbrella.window_block_analysis()
+
+    assert os.path.exists('window_block_analysis')
+    for idx in range(1, n_windows + 1):
+        assert os.path.exists('window_block_analysis/'
+                              f'block_analysis_window_{idx}.pdf')
 
 
 @work_in_zipped_dir(os.path.join(here, 'data.zip'))
@@ -175,3 +184,4 @@ def test_umbrella_save_load():
         assert np.isclose(window.zeta_ref, umbrella.zeta_refs[idx])
         assert np.isclose(window._bias.kappa, 100)
         assert len(window._obs_zetas) == 41
+
