@@ -183,8 +183,7 @@ def train(mlp:                 'mlptrain.potentials._base.MLPotential',
         if mlp.n_train == previous_n_train:
 
             if iteration >= min_active_iters:
-                logger.info('No AL configurations found. Final dataset size '
-                            f'= {previous_n_train} Active learning = DONE')
+                logger.info('No AL configurations found')
                 break
 
             else:
@@ -200,10 +199,7 @@ def train(mlp:                 'mlptrain.potentials._base.MLPotential',
 
         mlp.train()
 
-    # XXX
-    # if inherit_metad_bias:
-    #     _remove_last_inherited_metad_bias_file(max_active_iters, bias)
-
+    logger.info(f'Final dataset size f = {mlp.n_train} Active learning = DONE')
     return None
 
 
@@ -720,6 +716,10 @@ def _generate_inheritable_metad_bias_grid(n_configs, grid_files, bias,
         np.savetxt(fname=bytes_io, X=final_array, fmt='    %.9f')
         f.write(bytes_io.getvalue().decode())
 
+    os.makedirs('accumulated_bias', exist_ok=True)
+    shutil.copyfile(src=f'bias_grid_{iteration}.dat',
+                    dst=f'bias_after_iter_{iteration}.dat')
+
     return None
 
 
@@ -798,9 +798,10 @@ def _generate_inheritable_metad_bias_hills(n_configs, hills_files, iteration,
 
         os.remove(fname)
 
-    # XXX
+    os.makedirs('accumulated_bias', exist_ok=True)
     shutil.copyfile(src=f'HILLS_{iteration}.dat',
-                    dst=f'HILLS_{iteration}_copy.dat')
+                    dst=f'bias_after_iter_{iteration}.dat')
+
     return None
 
 
