@@ -235,6 +235,7 @@ def _run_mlp_md(configuration:  'mlptrain.Configuration',
                               bbond_energy=bbond_energy,
                               fbond_energy=fbond_energy,
                               restart_files=restart_files,
+                              load_last_frame=kwargs.get('load_last_frame', False),
                               traj_name=traj_name)
 
     ase_traj = _initialise_traj(ase_atoms, restart, traj_name)
@@ -448,16 +449,17 @@ def _attach_plumed_coordinates(mlt_traj, bias, **kwargs) -> None:
     return None
 
 
-def _set_momenta_and_geometry(ase_atoms:      'ase.atoms.Atoms',
-                              temp:           float,
-                              bbond_energy:   dict,
-                              fbond_energy:   dict,
-                              restart_files:  List[str],
-                              traj_name:      str
+def _set_momenta_and_geometry(ase_atoms:       'ase.atoms.Atoms',
+                              temp:            float,
+                              bbond_energy:    dict,
+                              fbond_energy:    dict,
+                              restart_files:   List[str],
+                              load_last_frame: bool,
+                              traj_name:       str
                               ) -> None:
     """Set the initial momenta and geometry of the starting configuration"""
 
-    if restart_files is None:
+    if restart_files is None and load_last_frame is False:
 
         if temp > 0:
             logger.info(f'Initialising initial velocities for {temp} K')
