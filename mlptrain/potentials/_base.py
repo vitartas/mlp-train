@@ -181,8 +181,8 @@ class MLPotential(ABC):
                     filename=f'{self.name}_al.{file_extension}')
 
         if iteration is not None:
-            shutil.copyfile(src=f'{self.name}.json',
-                            dst=f'{self.name}_{iteration}.json')
+            shutil.copyfile(src=f'{self.name}.model',
+                            dst=f'{self.name}_{iteration}.model')
 
         return None
 
