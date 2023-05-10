@@ -1010,6 +1010,19 @@ class UmbrellaSampling:
 
         return np.sqrt(np.abs(var_A))
 
+    def truncate_window_trajectories(self,
+                                     removed_fraction: float = 0.20
+                                     ) -> None:
+        """Remove not less then the fraction of the frames from the start of
+        the window trajectories"""
+
+        for window in self.windows:
+            obs_zetas = window._obs_zetas
+            n_removed = -(removed_fraction * len(obs_zetas) // -1)
+            window._obs_zetas = obs_zetas[n_removed:]
+
+        return None
+
     def _compute_average_std_in_interval(self,
                                          lower_edge: float,
                                          upper_edge: float
