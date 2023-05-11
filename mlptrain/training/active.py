@@ -199,7 +199,7 @@ def train(mlp:                 'mlptrain.potentials._base.MLPotential',
 
         mlp.train()
 
-    logger.info(f'Final dataset size f = {mlp.n_train} Active learning = DONE')
+    logger.info(f'Final dataset size = {mlp.n_train} Active learning = DONE')
     return None
 
 
