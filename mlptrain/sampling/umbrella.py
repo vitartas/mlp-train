@@ -1018,7 +1018,7 @@ class UmbrellaSampling:
 
         for window in self.windows:
             obs_zetas = window._obs_zetas
-            n_removed = -(removed_fraction * len(obs_zetas) // -1)
+            n_removed = int(-(removed_fraction * len(obs_zetas) // -1))
             window._obs_zetas = obs_zetas[n_removed:]
 
         return None
