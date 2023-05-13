@@ -1,3 +1,5 @@
+import shutil
+
 import numpy as np
 import mlptrain as mlt
 from copy import deepcopy
@@ -166,11 +168,19 @@ class MLPotential(ABC):
         """
         return sum(c.n_ref_evals for c in self._training_data)
 
-    def _save_training_data_as_npz_and_xyz(self) -> None:
+    def _save_training_data_as_npz_and_xyz(self, iteration=None) -> None:
         """Save the training data"""
 
         for file_extension in ('npz', 'xyz'):
-            self.training_data.save(filename=f'{self.name}_al.{file_extension}')
+            # TODO:
+            if iteration is None:
+                self.training_data.save(filename=f'{self.name}_al.{file_extension}')
+            else:
+                self.training_data.save(filename=f'{self.name}_al_{iteration}.{file_extension}')
+
+        if iteration is not None:
+            shutil.copyfile(src=f'{self.name}.model',
+                            dst=f'{self.name}_{iteration}.model')
 
         return None
 

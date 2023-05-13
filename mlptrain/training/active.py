@@ -199,6 +199,10 @@ def train(mlp:                 'mlptrain.potentials._base.MLPotential',
 
         mlp.train()
 
+        # TODO:
+        if iteration % 10 == 0:
+            mlp._save_training_data_as_npz_and_xyz(iteration=iteration)
+
     if inherit_metad_bias:
         _remove_last_inherited_metad_bias_file(max_active_iters, bias)
 
