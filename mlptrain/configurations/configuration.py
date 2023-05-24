@@ -190,7 +190,7 @@ class Configuration(AtomCollection):
         # if eq and self.n_atoms > 0:
         #     rmsd = np.linalg.norm(self.coordinates - other.coordinates)
         #     return eq and rmsd < 1E-10
-        return eq
+        return False
 
     def copy(self) -> 'Configuration':
         return deepcopy(self)
