@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import glob
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
@@ -53,23 +54,13 @@ class _Window:
         """Bin the observed reaction coordinates in this window into an a set
         of bins, defined by the array of bin centres"""
 
-        if self.bin_centres is None:
-            raise TypeError('Cannot bin with undefined bin centres')
+        if self.bin_edges is None:
+            raise RuntimeError('Cannot bin with undefined bin edges')
 
         self.hist, _ = np.histogram(self._obs_zetas, bins=self.bin_edges)
 
         self.bias_energies = ((self._bias.kappa/2)
                               * (self.bin_centres - self._bias.ref)**2)
-
-        return None
-
-    def set_bin_edges(self, outer_zeta_refs, n_bins) -> None:
-        """Compute and store an array with zeta values at bin edges"""
-
-        lmost_edge, rmost_edge = outer_zeta_refs
-        _bin_edges = np.linspace(lmost_edge, rmost_edge, num=n_bins+1)
-
-        self.bin_edges = _bin_edges
         return None
 
     @property
@@ -514,7 +505,7 @@ class UmbrellaSampling:
                 traj.save(filename=f'window_{idx}.xyz')
 
         else:
-            combined_traj = ConfigurationSet()
+            combined_traj = ConfigurationSet(allow_duplicates=True)
             for window_traj in window_trajs:
                 combined_traj += window_traj
 
@@ -576,6 +567,21 @@ class UmbrellaSampling:
         k_b = 8.617333262E-5  # Boltzmann constant in eV / K
         return 1.0 / (k_b * self.temp)
 
+    def _bin_windows(self, n_bins: int) -> None:
+        """For each window bin the observed zetas into a histogram"""
+
+        bin_centres = np.linspace(self.zeta_refs[0], self.zeta_refs[-1], num=n_bins)
+        bin_width = (bin_centres[-1] - bin_centres[0]) / (len(bin_centres) - 1)
+        logger.debug(f"Bin width: {bin_width} Å")
+
+        for window in self.windows:
+            window.bin_edges = np.linspace(
+                start=bin_centres[0] - bin_width / 2,
+                stop=bin_centres[-1] + bin_width / 2,
+                num=len(bin_centres) + 1
+            )
+            window.bin()
+
     def wham(self,
              tol:            float = 1E-3,
              max_iterations: int = 100000,
@@ -600,11 +606,7 @@ class UmbrellaSampling:
                                       and values of the free energy
         """
         beta = self.beta   # 1 / (k_B T)
-        outer_zeta_refs = (self.zeta_refs[0], self.zeta_refs[-1])
-
-        for window in self.windows:
-            window.set_bin_edges(outer_zeta_refs, n_bins=n_bins)
-            window.bin()
+        self._bin_windows(n_bins=n_bins)
 
         # Discretised reaction coordinate
         zetas = np.linspace(self.zeta_refs[0], self.zeta_refs[-1], num=n_bins)
@@ -642,7 +644,7 @@ class UmbrellaSampling:
                              ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Perform umbrella integration on the umbrella windows to un-bias the
-        probability distribution. Such that the the PMF becomes
+        probability distribution. Such that the PMF becomes
 
         .. math::
             dA/dq = Σ_i p_i(q) dA^u_i/ dq
@@ -662,12 +664,7 @@ class UmbrellaSampling:
             (np.ndarray, np.ndarray): Tuple containing the reaction coordinate
                                       and values of the free energy
         """
-        beta = self.beta   # 1 / (k_B T)
-        outer_zeta_refs = (self.zeta_refs[0], self.zeta_refs[-1])
-
-        for window in self.windows:
-            window.set_bin_edges(outer_zeta_refs, n_bins=n_bins)
-            window.bin()
+        self._bin_windows(n_bins=n_bins)
 
         # Discretised reaction coordinate
         zetas = np.linspace(self.zeta_refs[0], self.zeta_refs[-1], num=n_bins)
@@ -679,7 +676,7 @@ class UmbrellaSampling:
 
         for i, window in enumerate(self.windows):
             a_i = window.n * window.gaussian_pdf(zetas)
-            dA_dq += a_i * window.dAu_dq(zetas, beta=beta)
+            dA_dq += a_i * window.dAu_dq(zetas, beta=self.beta)
             sum_a += a_i
 
         # Normalise
@@ -722,11 +719,9 @@ class UmbrellaSampling:
             raise ValueError(f'Loading from a folder was not possible as '
                              f'{folder_name} is not a valid folder')
 
-        for filename in os.listdir(folder_name):
-
-            if filename.startswith('window_') and filename.endswith('.txt'):
-                window = _Window.from_file(os.path.join(folder_name, filename))
-                self.windows.append(window)
+        for filename in glob.glob(os.path.join(folder_name, 'window_*.txt')):
+            window = _Window.from_file(filename)
+            self.windows.append(window)
 
         return None
 
