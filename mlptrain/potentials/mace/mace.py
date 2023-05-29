@@ -13,7 +13,10 @@ from mlptrain.log import logger
 
 from ase.calculators.calculator import Calculator, all_changes
 from ase.stress import full_3x3_to_voigt_6_stress
-from mace.tools import torch_geometric, torch_tools, utils
+try:
+    from mace.tools import torch_geometric, torch_tools, utils
+except ModuleNotFoundError:
+    pass
 
 try:
     import torch
