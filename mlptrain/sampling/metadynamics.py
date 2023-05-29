@@ -344,6 +344,19 @@ class Metadynamics:
                     f'simulation(s), {n_processes} simulation(s) run '
                     f'in parallel, 1 walker per simulation')
 
+        # TODO:
+        # if Config.mace_params['calc_device'] == 'cuda':
+        #     kwargs['idx'] = 1
+        #     metad_traj = self._run_single_metad(configuration=configuration,
+        #                                         mlp=mlp,
+        #                                         temp=temp,
+        #                                         interval=interval,
+        #                                         dt=dt,
+        #                                         bias=self.bias,
+        #                                         kept_substrings=kept_substrings,
+        #                                         **kwargs)
+        #     metad_trajs.append(metad_traj)
+
         with Pool(processes=n_processes) as pool:
 
             for idx in range(n_runs):
