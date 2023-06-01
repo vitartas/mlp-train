@@ -199,12 +199,9 @@ def train(mlp:                 'mlptrain.potentials._base.MLPotential',
 
         mlp.train()
 
-<<<<<<< HEAD
-=======
     if inherit_metad_bias:
         _remove_last_inherited_metad_bias_file(max_active_iters, bias)
 
->>>>>>> update-block-analysis
     logger.info(f'Final dataset size = {mlp.n_train} Active learning = DONE')
     return None
 
