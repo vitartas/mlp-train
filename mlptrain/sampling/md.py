@@ -22,6 +22,118 @@ from ase.md.langevin import Langevin
 from ase.md.verlet import VelocityVerlet
 from ase.io import read
 from ase import units as ase_units
+from ase.dimer import DimerControl, MinModeAtoms, MinModeTranslate
+from ase.vibrations import Vibrations
+from ase.neb import NEB
+from ase.optimize import MDMin
+
+
+def mlp_cineb(init_configuration: 'mlptrain.Configuration',
+              final_configuration: 'mlptrain.Configuration',
+              mlp: 'mlptrain.potentials._base.MLPotential',
+              n_images: int = 16):
+    """
+    Optimise a TS using the CI-NEB method on a trained MLP
+
+    ---------------------------------------------------------------------------
+    Arguments:
+
+        init_configuration: Initial configuration for CI-NEB method
+
+        final_configuration: Final configuration for CI-NEB method
+
+        mlp: Machine learnt potential
+
+        n_images: (int) Total number of images to use in CI-NEB
+    """
+
+    if mlp.requires_non_zero_box_size and init_configuration.box is None:
+        logger.warning('Assuming vaccum simulation. Box size = 1000 nm^3')
+        init_configuration.box = Box([100, 100, 100])
+        final_configuration.box = Box([100, 100, 100])
+
+    initial = init_configuration.ase_atoms
+    final = final_configuration.ase_atoms
+
+    images = [initial]
+    images += [initial.copy() for _ in range(n_images - 2)]
+    images += [final]
+
+    neb = NEB(images, climb=True)
+    neb.interpolate()
+
+    for image in images:
+        image.calc = mlp.ase_calculator
+
+    optimizer = MDMin(neb, trajectory='cineb_method.traj')
+    optimizer.run(fmax=0.04)
+
+    return None
+
+
+def mlp_dimer(configuration: 'mlptrain.Configuration',
+              mlp: 'mlptrain.potentials._base.MLPotential',
+              displaced_atoms: Sequence,
+              fmax: float = 0.001
+              ):
+    """
+    Optimise a TS using the dimer method on a trained MLP.
+
+    ---------------------------------------------------------------------------
+    Arguments:
+
+        configuration: Configuration from which the optimisation is started
+
+        mlp: Machine learnt potential
+
+        displaced_atoms: (Sequence) Atoms to be displaced for the dimer method
+
+        fmax: (float) Force threshold for the dimer method
+    """
+
+    if mlp.requires_non_zero_box_size and configuration.box is None:
+        logger.warning('Assuming vaccum simulation. Box size = 1000 nm^3')
+        configuration.box = Box([100, 100, 100])
+
+    ase_atoms = configuration.ase_atoms
+    ase_atoms.calc = mlp.ase_calculator
+
+    n_atoms = len(ase_atoms)
+    logger.info(f'n_atoms: {n_atoms}')
+
+    mask = [1 if any([i == j for j in displaced_atoms]) else 0
+            for i in range(n_atoms)]
+
+    with DimerControl(initial_eigenmode_method='displacement',
+                      displacement_method='vector',
+                      logfile=None,
+                      mask=mask) as d_control:
+        d_atoms = MinModeAtoms(ase_atoms, d_control)
+
+        displacement_vector = []
+        for mask_val in mask:
+            if mask_val:
+                displacement_vector.extend([0.03 * np.random.rand(3)])
+            else:
+                displacement_vector.extend([np.array([0.0, 0.0, 0.0])])
+            pass
+
+        d_atoms.displace(displacement_vector=displacement_vector)
+
+        with MinModeTranslate(d_atoms,
+                              trajectory='dimer_method.traj',
+                              logfile=None) as dim_rlx:
+            dim_rlx.run(fmax=fmax)
+
+    ase_traj = ASETrajectory('dimer_method.traj', 'r')
+    optimised_atoms = ase_traj[-1]
+    optimised_atoms.calc = mlp.ase_calculator
+
+    vib = Vibrations(optimised_atoms)
+    vib.run()
+    vib.summary()
+
+    return None
 
 
 def run_mlp_md(configuration:      'mlptrain.Configuration',
