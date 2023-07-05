@@ -257,6 +257,14 @@ class _Window:
         if plot_gaussian:
             self._plot_gaussian(hist, bin_centres)
 
+        if not os.path.exists('hist.npy'):
+            np.save('hist.npy', hist)
+            np.save('bin_centres.npy', bin_centres)
+        else:
+            hist_total = np.load('hist.npy')
+            hist_total = np.vstack((hist_total, hist))
+            np.save('hist.npy', hist_total)
+
         plt.xlabel('Reaction coordinate / Å')
         plt.ylabel('Frequency')
         plt.tight_layout()
