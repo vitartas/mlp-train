@@ -26,6 +26,47 @@ from ase.dimer import DimerControl, MinModeAtoms, MinModeTranslate
 from ase.vibrations import Vibrations
 from ase.neb import NEB
 from ase.optimize import MDMin
+from ase.optimize.climbfixinternals import BFGSClimbFixInternals
+from ase.constraints import FixInternals
+
+
+def mlp_climb_fix_internals(configuration: 'mlptrain.Configuration',
+                            mlp: 'mlptrain.potentials._base.MLPotential',
+                            reaction_coord: List):
+    """
+    Optimise a TS using the BFGSClimbFixInternals method on a trained MLP
+
+    ---------------------------------------------------------------------------
+    Arguments:
+
+        configuration: Configuration from which the optimisation is started
+
+        mlp: Machine learnt potential
+
+        reaction_coord: (List) Array defining the reaction coordinate as a
+                               linear combination of bond lengths,
+                               i.e. [[atom_idx, atom_idx, weight], ...]
+    """
+
+    if mlp.requires_non_zero_box_size and configuration.box is None:
+        logger.warning('Assuming vaccum simulation. Box size = 1000 nm^3')
+        configuration.box = Box([100, 100, 100])
+
+    ase_atoms = configuration.ase_atoms
+    ase_atoms.calc = mlp.ase_calculator
+    ase_traj = ASETrajectory('bfgs_method.traj', 'w', ase_atoms)
+
+    bondcombo = [None, reaction_coord]
+    ase_atoms.set_constraint([FixInternals(bondcombos=[bondcombo])])
+
+
+    # Optimizer for transition state search along reaction coordinate
+    opt = BFGSClimbFixInternals(ase_atoms, climb_coordinate=reaction_coord,
+                                optB_fmax_scaling=0.0)
+    opt.attach(ase_traj.write, interval=1)
+    opt.run(fmax=0.05)  # Converge to a saddle point
+
+    return None
 
 
 def mlp_cineb(init_configuration: 'mlptrain.Configuration',
@@ -74,8 +115,7 @@ def mlp_cineb(init_configuration: 'mlptrain.Configuration',
 def mlp_dimer(configuration: 'mlptrain.Configuration',
               mlp: 'mlptrain.potentials._base.MLPotential',
               displaced_atoms: Sequence,
-              fmax: float = 0.001
-              ):
+              fmax: float = 0.001):
     """
     Optimise a TS using the dimer method on a trained MLP.
 
