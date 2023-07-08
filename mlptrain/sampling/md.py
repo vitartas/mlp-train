@@ -165,29 +165,23 @@ def mlp_dimer(configuration: 'mlptrain.Configuration',
                               logfile=None) as dim_rlx:
             dim_rlx.run(fmax=fmax)
 
-    ase_traj = ASETrajectory('dimer_method.traj', 'r')
-    optimised_atoms = ase_traj[-1]
-    optimised_atoms.calc = mlp.ase_calculator
-
-    vib = Vibrations(optimised_atoms)
-    vib.run()
-    vib.summary()
-
     return None
 
 
-def run_mlp_md(configuration:      'mlptrain.Configuration',
-               mlp:                'mlptrain.potentials._base.MLPotential',
-               temp:               float,
-               dt:                 float,
-               interval:           int,
-               init_temp:          Optional[float] = None,
-               fbond_energy:       Optional[dict] = None,
-               bbond_energy:       Optional[dict] = None,
-               bias:               Optional = None,
-               restart_files:      Optional[List[str]] = None,
-               copied_substrings:  Optional[Sequence[str]] = None,
-               kept_substrings:    Optional[Sequence[str]] = None,
+def run_mlp_md(configuration:       'mlptrain.Configuration',
+               mlp:                 'mlptrain.potentials._base.MLPotential',
+               temp:                float,
+               dt:                  float,
+               interval:            int,
+               init_temp:           Optional[float] = None,
+               fbond_energy:        Optional[dict] = None,
+               bbond_energy:        Optional[dict] = None,
+               bias:                Optional = None,
+               restart_files:       Optional[List[str]] = None,
+               copied_substrings:   Optional[Sequence[str]] = None,
+               kept_substrings:     Optional[Sequence[str]] = None,
+               temp_momentum:       Optional[float] = None,
+               align_momentum_mode: Optional[np.ndarray] = None,
                **kwargs
                ) -> 'mlptrain.Trajectory':
     """
@@ -234,6 +228,14 @@ def run_mlp_md(configuration:      'mlptrain.Configuration',
         copied_substrings: List of substrings with which files are copied
                            to the temporary directory. Files required for MLPs
                            are added to the list automatically
+
+        temp_momentum: (float | None) Temperature at which to initialise
+                                      momenta
+
+        align_momentum_mode: (np.ndarray | None) NumPy array of shape (N, 3)
+                             containing the mode whose momentum component
+                             is flipped if the momentum component points
+                             to the opposite direction of the mode
     ---------------
     Keyword Arguments:
 
@@ -292,21 +294,24 @@ def run_mlp_md(configuration:      'mlptrain.Configuration',
 
     traj = _run_mlp_md_decorated(configuration, mlp, temp, dt, interval,
                                  init_temp, fbond_energy, bbond_energy,
-                                 bias, restart_files, **kwargs)
+                                 bias, restart_files, temp_momentum,
+                                 align_momentum_mode, **kwargs)
 
     return traj
 
 
-def _run_mlp_md(configuration:  'mlptrain.Configuration',
-                mlp:            'mlptrain.potentials._base.MLPotential',
-                temp:           float,
-                dt:             float,
-                interval:       int,
-                init_temp:      Optional[float] = None,
-                fbond_energy:   Optional[dict] = None,
-                bbond_energy:   Optional[dict] = None,
-                bias:           Optional = None,
-                restart_files:  Optional[List[str]] = None,
+def _run_mlp_md(configuration:       'mlptrain.Configuration',
+                mlp:                 'mlptrain.potentials._base.MLPotential',
+                temp:                float,
+                dt:                  float,
+                interval:            int,
+                init_temp:           Optional[float] = None,
+                fbond_energy:        Optional[dict] = None,
+                bbond_energy:        Optional[dict] = None,
+                bias:                Optional = None,
+                restart_files:       Optional[List[str]] = None,
+                temp_momentum:       Optional[float] = None,
+                align_momentum_mode: Optional[np.ndarray] = None,
                 **kwargs
                 ) -> 'mlptrain.Trajectory':
     """
@@ -344,6 +349,14 @@ def _run_mlp_md(configuration:  'mlptrain.Configuration',
 
         restart_files: List of files which are needed for restarting the
                        simulation
+
+        temp_momentum: (float | None) Temperature at which to initialise
+                                      momenta
+
+        align_momentum_mode: (np.ndarray | None) NumPy array of shape (N, 3)
+                             containing the mode whose momentum component
+                             is flipped if the momentum component points
+                             to the opposite direction of the mode
     ---------------
     Keyword Arguments:
 
@@ -391,7 +404,9 @@ def _run_mlp_md(configuration:  'mlptrain.Configuration',
                               bbond_energy=bbond_energy,
                               fbond_energy=fbond_energy,
                               restart=restart,
-                              traj_name=traj_name)
+                              traj_name=traj_name,
+                              temp_momentum=temp_momentum,
+                              align_momentum_mode=align_momentum_mode)
 
     ase_traj = _initialise_traj(ase_atoms, restart, traj_name)
 
@@ -604,12 +619,14 @@ def _attach_plumed_coordinates(mlt_traj, bias, **kwargs) -> None:
     return None
 
 
-def _set_momenta_and_geometry(ase_atoms:      'ase.atoms.Atoms',
-                              temp:           float,
-                              bbond_energy:   dict,
-                              fbond_energy:   dict,
-                              restart:        bool,
-                              traj_name:      str
+def _set_momenta_and_geometry(ase_atoms:           'ase.atoms.Atoms',
+                              temp:                float,
+                              bbond_energy:        dict,
+                              fbond_energy:        dict,
+                              restart:             bool,
+                              traj_name:           str,
+                              temp_momentum:       Optional[float] = None,
+                              align_momentum_mode: Optional[np.ndarray] = None,
                               ) -> None:
     """Set the initial momenta and geometry of the starting configuration"""
 
@@ -623,6 +640,12 @@ def _set_momenta_and_geometry(ase_atoms:      'ase.atoms.Atoms',
         else:
             # Set the momenta to zero
             ase_atoms.arrays['momenta'] = np.zeros((len(ase_atoms), 3))
+
+        if temp_momentum is not None:
+            logger.info(f'Initialising initial velocities for {temp_momentum} K')
+
+            MaxwellBoltzmannDistribution(ase_atoms, temperature_K=temp_momentum,
+                                         rng=RandomState())
 
         def add_momenta(idx, vector, energy):
             masses = ase_atoms.get_masses()
@@ -669,6 +692,19 @@ def _set_momenta_and_geometry(ase_atoms:      'ase.atoms.Atoms',
 
         ase_atoms.set_positions(last_configuration.get_positions())
         ase_atoms.set_momenta(last_configuration.get_momenta())
+
+    if align_momentum_mode is not None:
+        p = ase_atoms.arrays['momenta'].flatten()
+        mode = align_momentum_mode.flatten()
+
+        p_component = (np.dot(mode, p) * mode
+                       / (np.linalg.norm(mode)**2))
+
+        aligned_p_component = (np.abs(np.dot(mode, p)) * mode
+                               / (np.linalg.norm(mode)**2))
+
+        new_p = p - p_component + aligned_p_component
+        ase_atoms.arrays['momenta'] = np.reshape(new_p, (len(ase_atoms), 3))
 
     return None
 
