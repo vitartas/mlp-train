@@ -402,6 +402,39 @@ class ConfigurationSet(list):
 
         return None
 
+    def load_bifurcation_downhill_dataset(self, coords, plumed_coords):
+        """
+        Load downhill dataset for the bifurcation reaction. A separate method
+        was written in order to load the dataset without all the required
+        information.
+
+        -----------------------------------------------------------------------
+        Arguments:
+
+            coords: (np.ndarray) data['R']
+
+            plumed_coords: (np.ndarray) data['R_plumed']
+        """
+
+        for i, coords in enumerate(coords):
+
+            atomic_numbers = np.array([6, 6, 1, 6, 8, 6, 6, 6, 8, 6,
+                                       1, 1, 1, 1, 1, 1, 1, 1, 1])
+            box = Box([100, 100, 100])
+            charge = 0
+            mult = 1
+
+            config = Configuration(atoms=_atoms_from_z_r(atomic_numbers, coords),
+                                   charge=charge,
+                                   mult=mult,
+                                   box=box)
+
+            config.plumed_coordinates = plumed_coords[i]
+
+            self.append(config)
+
+        return None
+
     def single_point(self,
                      method: str) -> None:
         """
