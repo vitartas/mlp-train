@@ -6,6 +6,7 @@ class OrcaPotential(MLPotential):
 
     def __init__(self,
                  name: str,
+                 path: str,
                  charge: int,
                  mult: int,
                  orcasimpleinput: str,
@@ -22,6 +23,7 @@ class OrcaPotential(MLPotential):
         self.orcablocks = orcablocks
 
         # ORCA v5.0.3
+        self.path = path
         self.path = '/usr/local/orca_5_0_3/orca'
         os.environ['ASE_ORCA_COMMAND'] = f'{self.path} PREFIX.inp > PREFIX.out'
 
