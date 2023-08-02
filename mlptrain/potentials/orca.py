@@ -24,7 +24,6 @@ class OrcaPotential(MLPotential):
 
         # ORCA v5.0.3
         self.path = path
-        self.path = '/usr/local/orca_5_0_3/orca'
         os.environ['ASE_ORCA_COMMAND'] = f'{self.path} PREFIX.inp > PREFIX.out'
 
     @property
